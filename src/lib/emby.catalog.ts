@@ -121,22 +121,173 @@ export function libraryKeyForItem(item: {
   return 'movies';
 }
 
-/** 条目 Id 编码：把 source + 源站 id 打包成稳定 GUID 形态 */
+/** 条目 Id 编码：把 source + 源站 id 打包成可逆的 GUID 形态 */
 export function encodeItemId(source: string, sourceId: string): string {
-  return deriveGuid(`${getServerId()}:item:${source}:${sourceId}`);
+  if (!encodableId(sourceId)) {
+    const id = deriveGuid(`${getServerId()}:item:${source}:${sourceId}`);
+    registerItemId(id, source, sourceId);
+    return id;
+  }
+
+  const srcHash = hash32(source).toString(16).padStart(8, '0');
+  const num = BigInt(sourceId).toString(16).padStart(20, '0').slice(-20);
+  return formatAsGuid(srcHash + '1' + '000' + num);
 }
 
-/** 解码条目 Id 回 source + 源站 id */
+/**
+ * 解码条目 Id 回 source + 源站 id。
+ *
+ * 无状态：任何 isolate 都能解出结果，不依赖进程内索引。
+ */
 export function decodeItemId(
   itemId: string
 ): { source: string; sourceId: string } | null {
+  const rev = decodeReversible(itemId);
+  if (rev) return { source: rev.source, sourceId: rev.sourceId };
   return idIndex.get(itemId) || null;
 }
 
 /**
- * 进程内 Id 反查表。
- * 由于 GUID 派生不可逆，运行时把见过的条目登记下来；
- * 冷启动未登记的 Id 通过 Items 端点的递归搜索回填。
+ * 条目 Id 编解码。
+ *
+ * ⚠️ 关键约束：Emby 客户端要求 Id 是 GUID 形态，但 Workers 是多 isolate 的，
+ * 「搜索」与「点开详情」是两个独立请求，很可能落在不同 isolate。
+ * 早期实现用不可逆哈希 + 进程内 Map 反查，导致点开条目时
+ * classifyId() 返回 unknown，客户端报 **Item not found**。
+ *
+ * 现在改为**无状态可逆编码**：把 source / sourceId / 集数打包进
+ * 一个 32 位十六进制字符串，再按 GUID 形态插入连字符。
+ * 任何 isolate 都能独立解码，不依赖任何内存状态。
+ *
+ * 布局（共 32 hex 字符 = 128 bit）：
+ *   [0..7]    源标识（source 的 32bit 哈希）
+ *   [8]       类型标记：'1' = item，'2' = episode
+ *   [9..11]   集数（12bit，<= 4095）
+ *   [12..31]  条目数字 Id（低位优先，最多 20 个 hex 字符）
+ *
+ * 注意：源站 id 绝大多数是纯数字（Apple CMS 的 vod_id）。
+ * 非数字 id 会回退到哈希方案，此时仍依赖进程内索引。
+ */
+
+/** 32bit 字符串哈希（FNV-1a） */
+function hash32(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** 把 32 位 hex 串按 GUID 形态分组，保证客户端接受 */
+function formatAsGuid(hex32: string): string {
+  const h = hex32.padEnd(32, '0').slice(0, 32);
+  return [
+    h.slice(0, 8),
+    h.slice(8, 12),
+    h.slice(12, 16),
+    h.slice(16, 20),
+    h.slice(20, 32),
+  ].join('-');
+}
+
+/** 去掉连字符，还原成 32 位 hex */
+function unfmtGuid(guid: string): string | null {
+  const h = guid.replace(/-/g, '').toLowerCase();
+  return /^[0-9a-f]{32}$/.test(h) ? h : null;
+}
+
+/** 判断 sourceId 是否可逆编码（纯数字且不太长） */
+function encodableId(sourceId: string): boolean {
+  return /^\d{1,18}$/.test(sourceId);
+}
+
+/** 解码结果 */
+interface DecodedId {
+  source: string;
+  sourceId: string;
+  episodeIndex?: number;
+}
+
+/**
+ * 编码分集 Id。
+ * 分集序号写在固定的 3 个 hex 位中，因此上限 4095 集。
+ */
+export function encodeEpisodeId(
+  source: string,
+  sourceId: string,
+  index: number
+): string {
+  if (!encodableId(sourceId)) {
+    const id = deriveGuid(`${getServerId()}:ep:${source}:${sourceId}:${index}`);
+    registerEpisodeId(id, source, sourceId, index);
+    return id;
+  }
+
+  const srcHash = hash32(source).toString(16).padStart(8, '0');
+  const ep = Math.max(0, Math.min(index, 0xfff)).toString(16).padStart(3, '0');
+  const num = BigInt(sourceId).toString(16).padStart(20, '0').slice(-20);
+  return formatAsGuid(srcHash + '2' + ep + num);
+}
+
+/**
+ * 解码条目 / 分集 Id。
+ * 优先走可逆编码；失败再查进程内索引（兼容旧 Id 与非数字源）。
+ */
+function decodeReversible(id: string): DecodedId | null {
+  const hex = unfmtGuid(id);
+  if (!hex) return null;
+
+  const type = hex[8];
+  if (type !== '1' && type !== '2') return null;
+
+  const srcHash = hex.slice(0, 8);
+  const epHex = hex.slice(9, 12);
+  const numHex = hex.slice(12, 32);
+
+  // 还原 sourceId（0 也是合法值，不做额外排除）
+  let sourceId: string;
+  try {
+    sourceId = BigInt('0x' + numHex).toString(10);
+  } catch {
+    return null;
+  }
+
+  // 还原 source：用已知源表反查哈希
+  // 未登记源时返回 null，避免把 Id 误解到错误的源上
+  const source = sourceKeyFromHash(srcHash);
+  if (!source) return null;
+
+  if (type === '2') {
+    return {
+      source,
+      sourceId,
+      episodeIndex: parseInt(epHex, 16),
+    };
+  }
+  return { source, sourceId };
+}
+
+/** 已注册的源 key -> hash 映射（由 config 在运行时填充） */
+const sourceHashMap = new Map<string, string>();
+
+/** 登记一个源，使 Id 可被反解 */
+export function registerSourceKey(key: string): void {
+  if (!key) return;
+  sourceHashMap.set(hash32(key).toString(16).padStart(8, '0'), key);
+}
+
+/** 登记多个源 */
+export function registerSourceKeys(keys: string[]): void {
+  keys.forEach(registerSourceKey);
+}
+
+/** 由源哈希反查 key */
+function sourceKeyFromHash(hash: string): string | undefined {
+  return sourceHashMap.get(hash);
+}
+
+/**
+ * 进程内 Id 反查表（仅作为非数字 id 与旧 Id 的兜底）。
  */
 const idIndex = new Map<string, { source: string; sourceId: string }>();
 
@@ -146,15 +297,7 @@ export function registerItemId(
   sourceId: string
 ): void {
   idIndex.set(itemId, { source, sourceId });
-}
-
-/** 剧集/分集 Id 编码 */
-export function encodeEpisodeId(
-  source: string,
-  sourceId: string,
-  index: number
-): string {
-  return deriveGuid(`${getServerId()}:ep:${source}:${sourceId}:${index}`);
+  registerSourceKey(source);
 }
 
 const episodeIndex = new Map<
@@ -169,13 +312,19 @@ export function registerEpisodeId(
   index: number
 ): void {
   episodeIndex.set(episodeId, { source, sourceId, index });
+  registerSourceKey(source);
 }
 
 export function decodeEpisodeId(
   episodeId: string
 ): { source: string; sourceId: string; index: number } | null {
+  const rev = decodeReversible(episodeId);
+  if (rev && rev.episodeIndex !== undefined) {
+    return { source: rev.source, sourceId: rev.sourceId, index: rev.episodeIndex };
+  }
   return episodeIndex.get(episodeId) || null;
 }
+
 
 /** 判断一个 Id 是哪种形态 */
 export function classifyId(

@@ -2,6 +2,7 @@
 
 import { AdminConfig } from './admin.types';
 import { getStorage, isD1Available } from './db';
+import { registerSourceKeys } from './emby.catalog';
 import runtimeConfig from './runtime';
 
 /**
@@ -209,6 +210,26 @@ function applyEnvOverrides(adminConfig: AdminConfig): AdminConfig {
   return adminConfig;
 }
 
+/**
+ * 把所有源 key 登记到 Id 编解码表。
+ *
+ * 条目 Id 是「源哈希 + 数字 id」的可逆编码，反解时需要由哈希
+ * 查回源 key。任何 isolate 在处理请求前都必须先登记，否则
+ * 点开条目会因解不出 source 而报 Item not found。
+ */
+function registerSourcesForIdDecoding(adminConfig: AdminConfig): void {
+  try {
+    const keys = (adminConfig.SourceConfig || [])
+      .map((s) => s.key)
+      .filter(Boolean);
+    if (keys.length) {
+      registerSourceKeys(keys);
+    }
+  } catch (err) {
+    console.error('登记源 key 失败:', err);
+  }
+}
+
 /** 读取全部用户（用于补全配置），失败返回空数组 */
 async function safeGetAllUsers(): Promise<string[]> {
   try {
@@ -230,6 +251,7 @@ async function safeGetAllUsers(): Promise<string[]> {
  */
 export async function getConfig(): Promise<AdminConfig> {
   if (cachedConfig) {
+    registerSourcesForIdDecoding(cachedConfig);
     return cachedConfig;
   }
 
@@ -238,6 +260,7 @@ export async function getConfig(): Promise<AdminConfig> {
     const fallback = buildDefaultConfig();
     ensureOwner(fallback, []);
     cachedConfig = applyEnvOverrides(fallback);
+    registerSourcesForIdDecoding(cachedConfig);
     return cachedConfig;
   }
 
@@ -261,6 +284,7 @@ export async function getConfig(): Promise<AdminConfig> {
       }
     }
 
+    registerSourcesForIdDecoding(cachedConfig);
     return cachedConfig;
   } catch (error) {
     console.error('读取管理配置失败，使用默认配置:', error);
