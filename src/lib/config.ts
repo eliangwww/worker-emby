@@ -103,39 +103,62 @@ function buildDefaultConfig(): AdminConfig {
   };
 }
 
-/** 合并 config.json 中的源与数据库中的源 */
+/**
+ * 合并 config.json 中的源与数据库中的源。
+ *
+ * 重要：config.json 被视为**权威列表**。
+ * - config.json 里有、DB 里没有  -> 新增
+ * - 两边都有                     -> 以 config.json 为准更新 api/name
+ * - DB 里有、config.json 里没有  -> 若是 from:'config'（来自旧版本 config.json）
+ *                                   则**删除**，否则保留（后台手工添加的源）
+ *
+ * 早期实现只做「新增」，导致更换 config.json 后旧源永久残留在 D1 中，
+ * 表现为「换了采集站却还是搜不到 / 搜到的还是旧源」。
+ */
 function mergeSources(adminConfig: AdminConfig): AdminConfig {
   const cfg = fileConfig();
   const apiSiteEntries = Object.entries(cfg.api_site || {});
-  const existing = new Set((adminConfig.SourceConfig || []).map((s) => s.key));
+  const fileKeys = new Set(apiSiteEntries.map(([k]) => k));
 
+  const existing = Array.isArray(adminConfig.SourceConfig)
+    ? adminConfig.SourceConfig
+    : [];
+
+  // 1) 删除：来自 config.json 但已从 config.json 移除的源
+  const kept = existing.filter((s) => {
+    if (fileKeys.has(s.key)) return true;
+    // 后台手工添加的源（custom）保留
+    return s.from === 'custom';
+  });
+
+  // 2) 更新：两边都有的以 config.json 为准
+  kept.forEach((source) => {
+    const siteConfig = cfg.api_site[source.key];
+    if (siteConfig) {
+      source.name = siteConfig.name;
+      source.api = siteConfig.api;
+      source.detail = siteConfig.detail;
+      source.is_adult = siteConfig.is_adult === true;
+      source.from = 'config';
+    }
+  });
+
+  // 3) 新增：config.json 有但 DB 没有的源
+  const present = new Set(kept.map((s) => s.key));
   apiSiteEntries.forEach(([key, site]) => {
-    if (!existing.has(key)) {
-      adminConfig.SourceConfig.push({
-        key,
-        name: site.name,
-        api: site.api,
-        detail: site.detail,
-        from: 'config',
-        disabled: false,
-        is_adult: site.is_adult === true,
-      });
-    }
+    if (present.has(key)) return;
+    kept.push({
+      key,
+      name: site.name,
+      api: site.api,
+      detail: site.detail,
+      from: 'config',
+      disabled: false,
+      is_adult: site.is_adult === true,
+    });
   });
 
-  // 不在 config.json 中的源标记为 custom，并同步 is_adult
-  const apiSiteKeys = new Set(apiSiteEntries.map(([k]) => k));
-  adminConfig.SourceConfig.forEach((source) => {
-    if (!apiSiteKeys.has(source.key)) {
-      source.from = 'custom';
-    } else {
-      const siteConfig = cfg.api_site[source.key];
-      if (siteConfig) {
-        source.is_adult = siteConfig.is_adult === true;
-      }
-    }
-  });
-
+  adminConfig.SourceConfig = kept;
   return adminConfig;
 }
 

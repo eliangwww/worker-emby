@@ -41,7 +41,7 @@ database_id = "fda82b15-af48-4561-8ea1-aaba1c197610"
 
 [vars]
 # 站点展示名称（同时作为 Emby 服务器名）
-SITE_NAME = "KatelyaTV Emby"
+SITE_NAME = "CaiJi EMBY"
 # 管理员账号（Emby 客户端登录用户名）
 USERNAME = "admin"
 # 是否允许通过 /api/register 注册普通用户
@@ -63,8 +63,8 @@ name = "katelyatv-emby"
 
 [[env.production.d1_databases]]
 binding = "DB"
-database_name = "katelyatv-emby"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_name = "采集EMBY"
+database_id = "fda82b15-af48-4561-8ea1-aaba1c197610"
 
 [env.production.vars]
 SITE_NAME = "KatelyaTV Emby"
@@ -84,7 +84,7 @@ name = "katelyatv-emby-preview"
 [[env.preview.d1_databases]]
 binding = "DB"
 database_name = "katelyatv-emby"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "fda82b15-af48-4561-8ea1-aaba1c197610"
 
 [env.preview.vars]
 SITE_NAME = "KatelyaTV Emby (Preview)"
