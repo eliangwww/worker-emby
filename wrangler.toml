@@ -1,0 +1,96 @@
+# KatelyaTV Emby · Cloudflare Workers / Pages 部署配置
+#
+# 本项目只支持 Cloudflare Workers & Pages 部署。
+#
+# 部署方式（二选一）：
+#
+# A. Cloudflare Pages（推荐，配合 Git 自动部署）
+#    Build command:             pnpm install --frozen-lockfile && pnpm run pages:build
+#    Build output directory:    .vercel/output/static
+#    兼容性标志:                 nodejs_compat
+#
+# B. Cloudflare Workers（wrangler 直接部署）
+#    pnpm run deploy
+#
+# ⚠️ 安全提示：请勿在版本库中提交真实密码。
+#    生产环境请使用 `wrangler secret put AUTH_PASSWORD` 注入密钥。
+
+name = "katelyatv-emby"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
+
+# ---------------------------------------------------------------------------
+# D1 数据库绑定（必需）
+#
+# 创建数据库：
+#   wrangler d1 create katelyatv-emby
+#
+# 初始化表结构：
+#   wrangler d1 execute katelyatv-emby --remote --file=./scripts/d1-init.sql
+#
+# 然后将下面 database_id 替换为创建时返回的真实 ID。
+# 使用 Pages 时，也可在 Dashboard → Settings → Functions → D1 绑定中添加：
+#   Variable name: DB
+#   D1 database:   katelyatv-emby
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "katelyatv-emby"
+database_id = "fda82b15-af48-4561-8ea1-aaba1c197610"
+
+[vars]
+# 站点展示名称（同时作为 Emby 服务器名）
+SITE_NAME = "KatelyaTV Emby"
+# 管理员账号（Emby 客户端登录用户名）
+USERNAME = "admin"
+# 是否允许通过 /api/register 注册普通用户
+NEXT_PUBLIC_ENABLE_REGISTER = "false"
+# 允许注册时，是否需要邮箱等额外信息（保留字段）
+NEXT_PUBLIC_SEARCH_MAX_PAGE = "5"
+# 上游接口缓存时间（秒）
+CACHE_TTL = "3600"
+# 图片是否经本站代理转发（源站防盗链严格时开启，会消耗更多请求额度）
+EMBY_PROXY_IMAGES = "false"
+# 是否允许使用全局 API Key 直连（X-Emby-Token），默认关闭
+EMBY_ENABLE_API_KEY = "false"
+
+# ---------------------------------------------------------------------------
+# 生产环境
+# ---------------------------------------------------------------------------
+[env.production]
+name = "katelyatv-emby"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "katelyatv-emby"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[env.production.vars]
+SITE_NAME = "KatelyaTV Emby"
+USERNAME = "admin"
+NEXT_PUBLIC_ENABLE_REGISTER = "false"
+NEXT_PUBLIC_SEARCH_MAX_PAGE = "5"
+CACHE_TTL = "3600"
+EMBY_PROXY_IMAGES = "false"
+EMBY_ENABLE_API_KEY = "false"
+
+# ---------------------------------------------------------------------------
+# 预览环境
+# ---------------------------------------------------------------------------
+[env.preview]
+name = "katelyatv-emby-preview"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "katelyatv-emby"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[env.preview.vars]
+SITE_NAME = "KatelyaTV Emby (Preview)"
+USERNAME = "admin"
+NEXT_PUBLIC_ENABLE_REGISTER = "false"
+NEXT_PUBLIC_SEARCH_MAX_PAGE = "5"
+CACHE_TTL = "3600"
+EMBY_PROXY_IMAGES = "false"
+EMBY_ENABLE_API_KEY = "false"

@@ -1,0 +1,10 @@
+{
+  "cache_time": 7200,
+  "api_site": {
+    "example_source": {
+      "api": "https://your-video-api.com/api.php/provide/vod",
+      "name": "示例视频源",
+      "is_adult": false
+    }
+  }
+}
