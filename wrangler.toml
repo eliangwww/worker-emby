@@ -63,7 +63,11 @@ name = "katelyatv-emby"
 
 [[env.production.d1_databases]]
 binding = "DB"
+<<<<<<< HEAD
 database_name = "采集EMBY"
+=======
+database_name = "katelyatv-emby"
+>>>>>>> 153a5cdabd576092d82002437a4cd37aff3cea24
 database_id = "fda82b15-af48-4561-8ea1-aaba1c197610"
 
 [env.production.vars]
