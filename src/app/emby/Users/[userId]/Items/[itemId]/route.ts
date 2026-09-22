@@ -5,7 +5,7 @@ import {
   toEmbyItem,
 } from '@/lib/emby.catalog';
 import { embyJson, embyNotFound, firstParam, withEmbyAuth } from '@/lib/emby.http';
-import { resolveItem, resolveSeasonsForLocation } from '@/lib/emby.items';
+import { resolveItem, resolveSeasonsForLocation, ensureSourcesRegistered } from '@/lib/emby.items';
 import { EmbyBaseItemDto, EmbyUserItemData } from '@/lib/emby.types';
 
 export const runtime = 'edge';
@@ -20,6 +20,10 @@ export const dynamic = 'force-dynamic';
 export const GET = withEmbyAuth(async (request, ctx, params) => {
   const itemId = firstParam(params, 'itemId');
   if (!itemId) return embyNotFound('Missing item id');
+
+  // ⚠️ 先登记源 key 再解码：冷启动 isolate 里源表为空时，
+  // 合法的 itemId 会被 classifyId 误判为 unknown，客户端显示 Item not found。
+  await ensureSourcesRegistered();
 
   // 媒体库视图
   const classified = classifyId(itemId);

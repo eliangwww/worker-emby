@@ -1,6 +1,6 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any */
 
-import { getAvailableApiSites, getFilteredApiSites } from './config';
+import { getAvailableApiSites, getConfig, getFilteredApiSites } from './config';
 import {
   fetchByCategory,
   fetchCategories,
@@ -48,6 +48,32 @@ export interface ResolvedItem {
   result: SearchResult;
 }
 
+/** 源表登记状态缓存（并发共享同一个 Promise） */
+let sourcesReady: Promise<void> | null = null;
+
+/**
+ * 确保源 key 已登记到 Id 编解码表。
+ *
+ * getConfig() 内部会调用 registerSourcesForIdDecoding()，
+ * 因此在做任何 classifyId() 之前调一次即可。
+ * 用 Promise 缓存避免并发请求重复读取配置。
+ *
+ * ⚠️ 所有直接调用 classifyId() 的路由都应先 await 本函数，
+ * 否则冷启动 isolate 会把合法 Id 误判为 unknown。
+ */
+export function ensureSourcesRegistered(): Promise<void> {
+  if (!sourcesReady) {
+    sourcesReady = getConfig()
+      .then(() => undefined)
+      .catch((err) => {
+        // 失败时允许下次重试，避免一次抖动导致整段生命周期不可用
+        sourcesReady = null;
+        console.error('登记源 key 失败:', err);
+      });
+  }
+  return sourcesReady;
+}
+
 /**
  * 根据 Emby 条目 Id 解析回源内容。
  *
@@ -64,6 +90,15 @@ export async function resolveItem(
   fallbackName?: string,
   userName?: string
 ): Promise<ResolvedItem | null> {
+  // ⚠️ 必须先登记源 key 再做 Id 解码。
+  //
+  // 条目 Id 是「源哈希 + 数字 id」的可逆编码，反解时需要用哈希
+  // 查回源 key；而源表只在 getConfig() 中被填充。Cloudflare 是多
+  // isolate 的，冷启动 isolate 里若无任何请求先触发 getConfig()，
+  // classifyId() 就会因查不到源而返回 unknown —— 表现为
+  // 「封面显示 No Image 占位图 + 点开条目 404 Item not found」。
+  await ensureSourcesRegistered();
+
   const classified = classifyId(itemId);
 
   // 1) 命中内存索引：直接按 source + id 取详情

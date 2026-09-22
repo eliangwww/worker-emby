@@ -1,8 +1,7 @@
 /* eslint-disable no-console */
 
 import { authenticateRequest } from '@/lib/emby.auth';
-import { classifyId } from '@/lib/emby.catalog';
-import { embyNotFound, embyUnauthorized } from '@/lib/emby.http';
+import { embyNotFound } from '@/lib/emby.http';
 import { resolveItem } from '@/lib/emby.items';
 
 export const runtime = 'edge';
@@ -48,11 +47,13 @@ export async function GET(
   if (!imageUrl) {
     if (!itemId) return embyNotFound('Missing item id');
 
-    const classified = classifyId(itemId);
-    if (classified.kind === 'unknown') {
-      return placeholderResponse();
-    }
-
+    // ⚠️ 不在这里用 classifyId 做「是否有效」的预判。
+    //
+    // classifyId 依赖源 key 表（由 getConfig() 填充）。冷启动 isolate
+    // 里源表可能为空，此时任何合法条目 Id 都会被误判为 unknown，
+    // 图片路由会直接吐占位图 —— 现象就是「封面全是 No Image」。
+    // 直接交给 resolveItem：它内部会先登记源 key 再解码，
+    // 解码失败也会回退到回源搜索。
     const resolved = await resolveItem(itemId, undefined, userName);
     if (!resolved || !resolved.result.poster) {
       return placeholderResponse();

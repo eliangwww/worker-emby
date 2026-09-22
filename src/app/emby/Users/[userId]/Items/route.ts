@@ -11,6 +11,7 @@ import {
   normalizeTitle,
   resolveEpisodes,
   resolveEpisodesForSeason,
+  ensureSourcesRegistered,
   resolveItem,
   resolveSeasons,
 } from '@/lib/emby.items';
@@ -88,6 +89,8 @@ export const GET = withEmbyAuth(async (request, ctx) => {
   }
   // ---------- 2) 按 ParentId 展开 ----------
   else if (parentId) {
+    // ⚠️ 先登记源 key 再解码（冷启动 isolate 否则解不出 ParentId）
+    await ensureSourcesRegistered();
     const classified = classifyId(parentId);
 
     if (classified.kind === 'view') {
