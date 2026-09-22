@@ -41,6 +41,7 @@ function shouldSkipAuth(pathname: string): boolean {
     '/api/login',
     '/api/logout',
     '/api/emby',
+    '/api/debug',
     '/emby',
   ];
 
@@ -53,6 +54,6 @@ function shouldSkipAuth(pathname: string): boolean {
  */
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|emby|api/emby|login|warning|api/login|api/logout|api/server-config|api/image-proxy).*)',
+    '/((?!_next/static|_next/image|favicon.ico|emby|api/emby|api/debug|login|warning|api/login|api/logout|api/server-config|api/image-proxy).*)',
   ],
 };

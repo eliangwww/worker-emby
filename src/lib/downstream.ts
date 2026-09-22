@@ -305,24 +305,44 @@ export function mapApiItemToResult(
       }
     });
 
-    // 非 m3u8 的直链源（mp4 等）也一并支持
+    // 非 m3u8 的直链源（mp4/ts/flv 等）也一并支持。
+    // 与 getDetailFromApi 保持一致：跨 `$$$` 组解析，挑「可播放地址
+    // 最多」的那一组，而不是盲取第 0 组（第 0 组有时是分享页等非直链）。
+    // 同时兼容两种写法：`第1集$http://...`（有集名）与 `$http://...`
+    //（仅有前导 $，无集名）。
     if (episodes.length === 0) {
-      const parts = item.vod_play_url.split('$$$')[0].split('#');
-      episodes = parts
-        .map((ep: string) => {
-          const seg = ep.split('$');
-          return seg.length > 1 ? seg[1] : '';
-        })
-        .filter(
-          (u: string) => u.startsWith('http://') || u.startsWith('https://')
-        );
+      const groups = item.vod_play_url.split('$$$').map((group: string) =>
+        group
+          .split('#')
+          .map((ep: string) => {
+            const trimmedEp = ep.trim();
+            const dollar = trimmedEp.indexOf('$');
+            const raw =
+              dollar >= 0 ? trimmedEp.slice(dollar + 1) : trimmedEp;
+            return raw.trim();
+          })
+          .filter(
+            (u: string) =>
+              u.startsWith('http://') || u.startsWith('https://')
+          )
+      );
+      const best = groups
+        .filter((g) => g.length > 0)
+        .sort((a, b) => b.length - a.length)[0];
+      episodes = best || [];
     }
   }
 
   episodes = Array.from(new Set(episodes)).map((link: string) => {
-    link = link.substring(1);
-    const parenIndex = link.indexOf('(');
-    return parenIndex > 0 ? link.substring(0, parenIndex) : link;
+    // ⚠️ 只有 m3u8 正则路径产出的链接才带前导 `$`（因为完整匹配含 `$`），
+    // 非 m3u8 回退路径产出的 URL 本身没有 `$`。若无条件 substring(1)，
+    // 会把 "https://..." 截成 "ttps://..."，导致 resolveStreamUrl 判定
+    // 非 http(s) 而返回 null —— 表现为「能选集、能进详情，但播不了」。
+    let u = link.startsWith('$') ? link.substring(1) : link;
+    // 去掉可能跟在 URL 后的括号备注，如 "https://x.m3u8 (高清)"
+    const parenIndex = u.indexOf('(');
+    if (parenIndex > 0) u = u.substring(0, parenIndex);
+    return u.trim();
   });
 
   return {

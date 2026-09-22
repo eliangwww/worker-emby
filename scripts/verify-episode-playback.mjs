@@ -126,5 +126,26 @@ const listRoute = read('src/app/emby/Users/[userId]/Items/route.ts');
 check('Items 路由有 episodesForParent 辅助', /async function episodesForParent\(/.test(listRoute));
 check('episodesForParent 附 MediaSources', /attachMediaSources\(/.test(listRoute));
 
+// ---------- 6) 播放地址解析：非 m3u8 直链不再被截断 ----------
+console.log('\n[6] 播放地址解析（downstream）');
+const downstream = read('src/lib/downstream.ts');
+check(
+  '不再无条件 substring(1) 破坏 http(s) 直链',
+  !/episodes = Array\.from\(new Set\(episodes\)\)\.map\(\(link: string\) => \{\s*\n\s*link = link\.substring\(1\);\s*\n\s*const parenIndex/.test(downstream)
+);
+check(
+  'mapApiItemToResult 非 m3u8 回退跨组挑最多的一条',
+  /const best = groups\s*\n?\s*\.filter\(\(g\) => g\.length > 0\)\s*\n?\s*\.sort\(\(a, b\) => b\.length - a\.length\)\[0\]/.test(downstream)
+);
+check(
+  '仅对带 $ 前缀的链接去前缀',
+  /link\.startsWith\('\$'\) \? link\.substring\(1\) : link/.test(downstream)
+);
+
+// ---------- 7) 播放链路诊断端点 ----------
+console.log('\n[7] 播放诊断端点');
+const debugPlayback = 'src/app/api/debug/playback/route.ts';
+check('诊断端点存在', exists(debugPlayback));
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);
 process.exit(fail === 0 ? 0 : 1);
