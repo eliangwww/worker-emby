@@ -7,6 +7,7 @@ import {
   firstParam,
 } from '@/lib/emby.http';
 import { resolveMediaSource, resolveStreamByLocation } from '@/lib/emby.items';
+import { parseMediaSourceId } from '@/lib/emby.playback';
 import { proxyMedia } from '@/lib/emby.proxy';
 
 export const runtime = 'edge';
@@ -58,6 +59,23 @@ async function handle(
 
   const mediaSourceId = searchParams.get('MediaSourceId') || undefined;
 
+  // 优先用 MediaSourceId（形如 source:sourceId:ep）直接定位，
+  // 可省一次详情回源。这是客户端播放时最常带的参数。
+  if (mediaSourceId) {
+    const parsed = parseMediaSourceId(mediaSourceId);
+    if (parsed) {
+      const byLocation = await resolveStreamByLocation({
+        source: parsed.source,
+        sourceId: parsed.sourceId,
+        episodeIndex: parsed.episodeIndex,
+      });
+      if (byLocation) {
+        return proxyMedia(request, byLocation.stream.url, byLocation.stream.isHls);
+      }
+    }
+  }
+
+  // 回退：由 itemId 解析出应该播哪一集
   const resolved = await resolveMediaSource({
     itemId,
     userName: auth.userName,
@@ -69,13 +87,19 @@ async function handle(
     return embyError(404, 'No playable stream found');
   }
 
-  const upstream = resolved.mediaSource.Path;
-  if (!upstream) {
-    return embyError(404, 'Media source has no path');
+  // ⚠️ 必须代理**真实上游地址**，而不是 mediaSource.Path。
+  // Path 指向本站自己的代理端点，转发它会造成自我回环，
+  // 并且丢失源站所需的 Referer/User-Agent。
+  const byLocation = await resolveStreamByLocation({
+    source: resolved.result.source,
+    sourceId: resolved.result.id,
+  });
+
+  if (!byLocation) {
+    return embyError(404, 'No playable stream found');
   }
 
-  const isHls = resolved.mediaSource.Container === 'm3u8';
-  return proxyMedia(request, upstream, isHls);
+  return proxyMedia(request, byLocation.stream.url, byLocation.stream.isHls);
 }
 
 export async function GET(

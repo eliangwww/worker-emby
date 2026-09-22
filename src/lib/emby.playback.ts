@@ -94,9 +94,8 @@ export function buildMediaSource(opts: {
   const mediaSourceId = buildMediaSourceId(source, sourceId, episodeIndex);
   const duration = durationSec && durationSec > 0 ? durationSec : 45 * 60;
 
-  // 本站代理地址：解决部分客户端无法直连源站（防盗链/UA/CORS）的问题
-  const proxyUrl = buildProxyUrl(baseUrl, source, sourceId, episodeIndex);
-  // 转码/直连统一走代理，客户端把 api_key 交给本站即可
+  // 转码/直连统一走 direct 代理：解决源站防盗链（Referer/UA）
+  // 与 m3u8 相对分片问题。该地址是真实存在的路由。
   const transcodeUrl = buildTranscodeUrl(
     baseUrl,
     mediaSourceId,
@@ -109,7 +108,10 @@ export function buildMediaSource(opts: {
   return {
     Protocol: 'Http',
     Id: mediaSourceId,
-    Path: stream.url,
+    // Path 指向本站代理，而非上游直链。
+    // 原因：多数聚合源有防盗链，客户端直连会 403；
+    // 且部分客户端不允许 http 混合内容。
+    Path: transcodeUrl,
     Type: 'Default',
     Container: stream.container,
     Name: title,
@@ -119,10 +121,11 @@ export function buildMediaSource(opts: {
     IgnoreDts: true,
     IgnoreIndex: true,
     GenPtsInput: false,
-    // HLS 源声明支持直连/直通，客户端不会强制要求转码
+    // HLS 是天然可直通的流：声明支持直通/直连，
+    // 客户端就不会去找不存在的转码器。
     SupportsTranscoding: true,
     SupportsDirectStream: true,
-    SupportsDirectPlay: !stream.isHls,
+    SupportsDirectPlay: true,
     IsInfiniteStream: false,
     RequiresOpening: false,
     RequiresClosing: false,
@@ -130,7 +133,7 @@ export function buildMediaSource(opts: {
     SupportsProbing: true,
     MediaStreams: buildMediaStreams(stream),
     MediaAttachments: [],
-    Formats: [],
+    Formats: ['hls', stream.container],
     RequiredHttpHeaders: {},
     TranscodingUrl: transcodeUrl,
     TranscodingSubProtocol: 'http',
@@ -214,24 +217,15 @@ function guessVideoCodec(container: string): string {
   }
 }
 
-/** 本站代理播放地址（客户端可用作直链） */
-export function buildProxyUrl(
-  baseUrl: string,
-  source: string,
-  sourceId: string,
-  episodeIndex?: number
-): string {
-  const params = new URLSearchParams({ source, id: sourceId });
-  if (episodeIndex && episodeIndex > 0) {
-    params.set('ep', String(episodeIndex));
-  }
-  return `${baseUrl}/api/emby/stream/direct?${params.toString()}`;
-}
-
 /**
  * 构造客户端可用的 TranscodingUrl。
- * Emby 客户端会把 api_key 追加到该地址后请求，
- * 因此这里指向本站的统一播放端点。
+ *
+ * ⚠️ 必须指向**真实存在**的路由。
+ * 早期实现指向 /api/emby/videos/stream（该路由从未创建），
+ * 客户端（如 Hills）跟随该地址会拿到 404，表现为「找不到 item / 无法播放」。
+ *
+ * 现在统一指向 /api/emby/stream/direct —— 该端点会解析出真实
+ * 上游地址并透传 Range，支持拖动进度条。
  */
 export function buildTranscodeUrl(
   baseUrl: string,
@@ -251,7 +245,7 @@ export function buildTranscodeUrl(
   if (episodeIndex && episodeIndex > 0) {
     params.set('ep', String(episodeIndex));
   }
-  return `${baseUrl}/api/emby/videos/stream?${params.toString()}`;
+  return `${baseUrl}/api/emby/stream/direct?${params.toString()}`;
 }
 
 /** 构造 PlaybackInfo 响应 */
