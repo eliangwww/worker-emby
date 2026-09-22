@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 
 import { authenticateRequest } from './emby.auth';
 import { resolveBaseUrl } from './emby.config';
+import { recordRequest } from './emby.debug';
 
 /**
  * Emby 客户端对响应头比较敏感：
@@ -103,6 +104,9 @@ export function firstParam(
  *
  * 签名与 Next.js App Router 一致：handler(request, { params })。
  * 鉴权失败自动返回 401。
+ *
+ * 若开启了 EMBY_DEBUG_REQUESTS，会把请求与结果记录到 D1，
+ * 便于排查「某客户端播不了」这类无法本地复现的问题。
  */
 export function withEmbyAuth(
   handler: (
@@ -117,10 +121,14 @@ export function withEmbyAuth(
   ): Promise<Response> => {
     const auth = await authenticateRequest(request);
     if (!auth.ok) {
+      void recordRequest(request, 401, 'unauthorized');
       return embyUnauthorized();
     }
+
+    const params = routeCtx?.params || {};
+
     try {
-      return await handler(
+      const response = await handler(
         request,
         {
           userId: auth.userId!,
@@ -128,12 +136,21 @@ export function withEmbyAuth(
           isAdmin: !!auth.isAdmin,
           token: auth.token,
         },
-        routeCtx?.params || {}
+        params
       );
+
+      // 记录请求（含命中的动态段，便于定位是哪条内容）
+      const paramStr = Object.entries(params)
+        .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join('/') : v}`)
+        .join('&');
+      void recordRequest(request, response.status, paramStr);
+
+      return response;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Emby 路由处理失败:', err);
       const message = err instanceof Error ? err.message : 'Internal error';
+      void recordRequest(request, 500, message);
       return embyError(500, message);
     }
   };

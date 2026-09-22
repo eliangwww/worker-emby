@@ -170,11 +170,19 @@ export function parseMediaSourceId(
 
 /**
  * 媒体流声明。
- * 不声明视频流具体编码，避免客户端因为编码不匹配而拒绝播放；
- * 仅给出容器与基础信息，并提供一个外部字幕占位。
+ *
+ * ⚠️ 这些字段会直接影响客户端的播放决策（尤其是 Hills / Yamby
+ * 这类基于 ExoPlayer 的 Android 客户端）：
+ *
+ *  - DeliveryMethod 必须是 'DirectStream'。
+ *    写成 'Encode' 等于告诉客户端「服务器会转码」，客户端会去请求
+ *    转码流，而本站没有转码器，结果是黑屏或「无法播放」。
+ *  - 视频流 Index 用 0，音频流 Index 用 1，
+ *    与 DefaultAudioStreamIndex 保持一致（客户端按 Index 选择轨道）。
+ *  - HLS 的实际编码在播放列表里，这里只做保守声明。
  */
 function buildMediaStreams(stream: ResolvedStream): EmbyMediaStream[] {
-  const streams: EmbyMediaStream[] = [
+  return [
     {
       Type: 'Video',
       Index: 0,
@@ -183,8 +191,10 @@ function buildMediaStreams(stream: ResolvedStream): EmbyMediaStream[] {
       IsDefault: true,
       IsExternal: false,
       SupportsExternalStream: false,
-      DeliveryMethod: 'Encode',
+      DeliveryMethod: 'DirectStream',
+      DeliveryUrl: undefined,
       IsExternalUrl: false,
+      IsTextSubtitleStream: false,
       Width: 1920,
       Height: 1080,
     },
@@ -200,11 +210,11 @@ function buildMediaStreams(stream: ResolvedStream): EmbyMediaStream[] {
       Channels: 2,
       ChannelLayout: 'stereo',
       SampleRate: 44100,
-      DeliveryMethod: 'Encode',
+      DeliveryMethod: 'DirectStream',
       IsExternalUrl: false,
+      IsTextSubtitleStream: false,
     },
   ];
-  return streams;
 }
 
 function guessVideoCodec(container: string): string {

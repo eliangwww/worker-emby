@@ -231,6 +231,41 @@ check('TranscodingUrl 非空', !!ms?.TranscodingUrl);
 console.log(`      Path          = ${ms?.Path}`);
 console.log(`      TranscodingUrl= ${ms?.TranscodingUrl}`);
 
+// ---- 关键：客户端的播放决策字段（Hills / ExoPlayer 类客户端） ----
+console.log('\n[播放决策字段]');
+const streams = ms?.MediaStreams || [];
+const videoStream = streams.find((s) => s.Type === 'Video');
+const audioStream = streams.find((s) => s.Type === 'Audio');
+
+check('声明了 Video 流', !!videoStream);
+check('声明了 Audio 流', !!audioStream);
+check(
+  'Video.DeliveryMethod 为 DirectStream（非 Encode）',
+  videoStream?.DeliveryMethod === 'DirectStream',
+  String(videoStream?.DeliveryMethod)
+);
+check(
+  'Audio.DeliveryMethod 为 DirectStream（非 Encode）',
+  audioStream?.DeliveryMethod === 'DirectStream',
+  String(audioStream?.DeliveryMethod)
+);
+check('Video.Index 为 0', videoStream?.Index === 0, String(videoStream?.Index));
+check('Audio.Index 为 1', audioStream?.Index === 1, String(audioStream?.Index));
+check(
+  'DefaultAudioStreamIndex 与 Audio.Index 一致',
+  ms?.DefaultAudioStreamIndex === audioStream?.Index,
+  `default=${ms?.DefaultAudioStreamIndex} audio=${audioStream?.Index}`
+);
+check('DefaultSubtitleStreamIndex 为 -1（不强制字幕）',
+  ms?.DefaultSubtitleStreamIndex === -1, String(ms?.DefaultSubtitleStreamIndex));
+check('TranscodingContainer 为 ts（HLS 输出容器）',
+  ms?.TranscodingContainer === 'ts', String(ms?.TranscodingContainer));
+check('IsInfiniteStream 为 false', ms?.IsInfiniteStream === false);
+check('Protocol 为 Http', ms?.Protocol === 'Http', String(ms?.Protocol));
+check('Formats 含 hls', Array.isArray(ms?.Formats) && ms.Formats.includes('hls'),
+  JSON.stringify(ms?.Formats));
+check('RunTimeTicks 为正数', (ms?.RunTimeTicks || 0) > 0, String(ms?.RunTimeTicks));
+
 // ============ 关键：真的去 GET 这些 URL ============
 console.log('\n[关键] 跟随客户端真实会请求的 URL');
 
@@ -278,17 +313,11 @@ check('分片地址已重写为本站代理', body.includes('/api/emby/stream/pr
 
 // 4d) 标准 Emby 播放路径（客户端另一种走法）
 const vUrl = `${BASE}/emby/Videos/${EP_ID}/stream?Static=true&api_key=${auth.AccessToken}`;
-console.log(`      [调试] 请求: ${vUrl}`);
 const vRes = await hit(vUrl, {});
 check('标准 /emby/Videos/{id}/stream 可播', vRes.status === 200 || vRes.status === 206,
   `status=${vRes.status}`);
 if (vRes.status !== 200 && vRes.status !== 206) {
   console.log(`      [调试] 响应体: ${(await vRes.text()).slice(0, 200)}`);
-  console.log(`      [调试] EP_ID = ${EP_ID}`);
-  const isoDbg = freshIsolate();
-  await isoDbg.get('lib/config.ts').getConfig();
-  const cat = isoDbg.get('lib/emby.catalog.ts');
-  console.log(`      [调试] classifyId(EP_ID) = ${JSON.stringify(cat.classifyId(EP_ID))}`);
 }
 
 // 4e) 分片代理可用 + Range 支持（拖动进度条）

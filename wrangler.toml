@@ -54,6 +54,8 @@ CACHE_TTL = "3600"
 EMBY_PROXY_IMAGES = "false"
 # 是否允许使用全局 API Key 直连（X-Emby-Token），默认关闭
 EMBY_ENABLE_API_KEY = "false"
+# 是否记录客户端请求（排查播放问题时设为 true，通过 /emby/Diagnostics/Requests 查看）
+EMBY_DEBUG_REQUESTS = "false"
 
 # ---------------------------------------------------------------------------
 # 生产环境
@@ -74,6 +76,8 @@ NEXT_PUBLIC_SEARCH_MAX_PAGE = "5"
 CACHE_TTL = "3600"
 EMBY_PROXY_IMAGES = "false"
 EMBY_ENABLE_API_KEY = "false"
+# 是否记录客户端请求（排查播放问题时设为 true，通过 /emby/Diagnostics/Requests 查看）
+EMBY_DEBUG_REQUESTS = "false"
 
 # ---------------------------------------------------------------------------
 # 预览环境
@@ -94,3 +98,5 @@ NEXT_PUBLIC_SEARCH_MAX_PAGE = "5"
 CACHE_TTL = "3600"
 EMBY_PROXY_IMAGES = "false"
 EMBY_ENABLE_API_KEY = "false"
+# 是否记录客户端请求（排查播放问题时设为 true，通过 /emby/Diagnostics/Requests 查看）
+EMBY_DEBUG_REQUESTS = "false"
