@@ -56,7 +56,7 @@ EMBY_PROXY_IMAGES = "false"
 # 排查问题时请一并设置 EMBY_API_KEY，然后用 /api/debug/playback?api_key=<key> 诊断。
 EMBY_ENABLE_API_KEY = "true"
 # 全局 API Key（配合 EMBY_ENABLE_API_KEY=true 使用；生产环境建议用 wrangler secret 注入）
-EMBY_API_KEY = "admin"
+EMBY_API_KEY = "123456789"
 # 是否记录客户端请求（排查播放问题时设为 true，通过 /emby/Diagnostics/Requests 查看）
 EMBY_DEBUG_REQUESTS = "true"
 
@@ -78,7 +78,7 @@ NEXT_PUBLIC_ENABLE_REGISTER = "false"
 NEXT_PUBLIC_SEARCH_MAX_PAGE = "5"
 CACHE_TTL = "3600"
 EMBY_PROXY_IMAGES = "false"
-EMBY_ENABLE_API_KEY = "false"
+EMBY_ENABLE_API_KEY = "true"
 # 是否记录客户端请求（排查播放问题时设为 true，通过 /emby/Diagnostics/Requests 查看）
 EMBY_DEBUG_REQUESTS = "ture"
 
