@@ -383,18 +383,48 @@ export async function getDetailFromApi(
   // 处理播放源拆分
   if (videoDetail.vod_play_url) {
     const playSources = videoDetail.vod_play_url.split('$$$');
-    if (playSources.length > 0) {
-      const mainSource = playSources[0];
-      const episodeList = mainSource.split('#');
-      episodes = episodeList
+
+    // ⚠️ 不再盲取 playSources[0]。
+    //
+    // 部分采集站（如 U酷影视 ykzy）的第 0 组是 \"分享页\" 之类的
+    // 非标准地址（如 https://xxx/share/xxx），并非可直接播放的
+    // m3u8/mp4；真正的播放地址在第 1 组。旧实现只取第 0 组，
+    // 会导致这些源「能搜到、点进去却播不了」。
+    //
+    // 改为：解析每一组的可播放地址，选「数量最多」且含 m3u8 的
+    // 那一组；都没有 m3u8 时退回「可播放地址最多」的组。
+    const parsedGroups: string[][] = playSources.map((group: string) =>
+      group
+        .split('#')
         .map((ep: string) => {
           const parts = ep.split('$');
-          return parts.length > 1 ? parts[1] : '';
+          return parts.length > 1 ? parts[1].trim() : '';
         })
         .filter(
           (url: string) =>
             url && (url.startsWith('http://') || url.startsWith('https://'))
-        );
+        )
+    );
+
+    const m3u8Groups = parsedGroups
+      .map((urls, idx) => ({ idx, urls }))
+      .filter((g) => g.urls.some((u) => /\.m3u8(\?|$)/i.test(u)));
+
+    if (m3u8Groups.length) {
+      const best = m3u8Groups.sort(
+        (a, b) => b.urls.length - a.urls.length
+      )[0];
+      episodes = best.urls;
+    } else {
+      const nonEmpty = parsedGroups
+        .map((urls, idx) => ({ idx, urls }))
+        .filter((g) => g.urls.length > 0);
+      if (nonEmpty.length) {
+        const best = nonEmpty.sort(
+          (a, b) => b.urls.length - a.urls.length
+        )[0];
+        episodes = best.urls;
+      }
     }
   }
 

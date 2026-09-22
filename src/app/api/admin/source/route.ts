@@ -10,7 +10,7 @@ import { IStorage } from '@/lib/types';
 export const runtime = 'edge';
 
 // 支持的操作类型
-type Action = 'add' | 'disable' | 'enable' | 'delete' | 'sort';
+type Action = 'add' | 'disable' | 'enable' | 'delete' | 'sort' | 'setprimary';
 
 interface BaseBody {
   action?: Action;
@@ -38,7 +38,14 @@ export async function POST(request: NextRequest) {
     const username = authInfo.username;
 
     // 基础校验
-    const ACTIONS: Action[] = ['add', 'disable', 'enable', 'delete', 'sort'];
+    const ACTIONS: Action[] = [
+      'add',
+      'disable',
+      'enable',
+      'delete',
+      'sort',
+      'setprimary',
+    ];
     if (!username || !action || !ACTIONS.includes(action)) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
@@ -141,10 +148,29 @@ export async function POST(request: NextRequest) {
         adminConfig.SourceConfig = newList;
         break;
       }
+      case 'setprimary': {
+        const { key } = body as { key?: string };
+        if (!key)
+          return NextResponse.json({ error: '缺少 key 参数' }, { status: 400 });
+        const target = adminConfig.SourceConfig.find((s) => s.key === key);
+        if (!target)
+          return NextResponse.json({ error: '源不存在' }, { status: 404 });
+        if (target.disabled) {
+          return NextResponse.json(
+            { error: '不能把已禁用的源设为主源' },
+            { status: 400 }
+          );
+        }
+        // 主源唯一：先清除所有标记，再标记目标
+        adminConfig.SourceConfig.forEach((s) => {
+          s.is_primary = false;
+        });
+        target.is_primary = true;
+        break;
+      }
       default:
         return NextResponse.json({ error: '未知操作' }, { status: 400 });
     }
-
     // 持久化到存储
     if (storage && typeof (storage as any).setAdminConfig === 'function') {
       await (storage as any).setAdminConfig(adminConfig);

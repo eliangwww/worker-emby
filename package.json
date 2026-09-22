@@ -10,7 +10,7 @@
     "lint:fix": "eslint src --fix",
     "lint:strict": "eslint --max-warnings=0 src",
     "typecheck": "tsc --noEmit --incremental false",
-    "verify": "node scripts/verify-emby.mjs && node scripts/verify-id-codec.mjs && node scripts/verify-cold-start-id.mjs",
+    "verify": "node scripts/verify-emby.mjs && node scripts/verify-id-codec.mjs && node scripts/verify-cold-start-id.mjs && node scripts/verify-shows-routes.mjs",
     "verify:endpoints": "node --experimental-sqlite scripts/smoke-emby.mjs",
     "format": "prettier -w .",
     "format:check": "prettier -c .",

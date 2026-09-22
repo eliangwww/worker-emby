@@ -6,7 +6,7 @@ import {
   embyUnauthorized,
   firstParam,
 } from '@/lib/emby.http';
-import { resolveMediaSource, resolveStreamByLocation } from '@/lib/emby.items';
+import { resolveMediaSource, resolveStreamWithSupplement } from '@/lib/emby.items';
 import { parseMediaSourceId } from '@/lib/emby.playback';
 import { proxyMedia } from '@/lib/emby.proxy';
 
@@ -43,10 +43,11 @@ async function handle(
   const ep = Number(searchParams.get('ep') || 0);
 
   if (source && rawId) {
-    const resolved = await resolveStreamByLocation({
+    const resolved = await resolveStreamWithSupplement({
       source,
       sourceId: rawId,
       episodeIndex: ep > 0 ? ep : undefined,
+      userName: auth.userName,
     });
     if (!resolved) return embyError(404, 'No playable stream found');
     return proxyMedia(request, resolved.stream.url, resolved.stream.isHls);
@@ -64,10 +65,11 @@ async function handle(
   if (mediaSourceId) {
     const parsed = parseMediaSourceId(mediaSourceId);
     if (parsed) {
-      const byLocation = await resolveStreamByLocation({
+      const byLocation = await resolveStreamWithSupplement({
         source: parsed.source,
         sourceId: parsed.sourceId,
         episodeIndex: parsed.episodeIndex,
+        userName: auth.userName,
       });
       if (byLocation) {
         return proxyMedia(request, byLocation.stream.url, byLocation.stream.isHls);
@@ -90,9 +92,14 @@ async function handle(
   // ⚠️ 必须代理**真实上游地址**，而不是 mediaSource.Path。
   // Path 指向本站自己的代理端点，转发它会造成自我回环，
   // 并且丢失源站所需的 Referer/User-Agent。
-  const byLocation = await resolveStreamByLocation({
+  //
+  // 若主源没有可播放地址，resolveStreamWithSupplement 会用标题
+  // 到其他源找可播放的那一份作为「播放源补充」。
+  const byLocation = await resolveStreamWithSupplement({
     source: resolved.result.source,
     sourceId: resolved.result.id,
+    title: resolved.result.title,
+    userName: auth.userName,
   });
 
   if (!byLocation) {

@@ -344,12 +344,52 @@ export async function getAvailableApiSites(
     sites = sites.filter((s) => !s.is_adult);
   }
 
+  // 主源排最前：元数据/搜索/选集优先命中主源
+  sites = sortPrimaryFirst(sites);
+
   return sites.map((s) => ({
     key: s.key,
     name: s.name,
     api: s.api,
     detail: s.detail,
   }));
+}
+
+/**
+ * 主源排到最前（稳定排序）。
+ *
+ * 用于让「搜索 / 列表 / 推荐」这类聚合逻辑优先取主源结果；
+ * 其余源保持原有顺序作为播放源补充。
+ */
+function sortPrimaryFirst<T extends { is_primary?: boolean }>(sites: T[]): T[] {
+  return [...sites].sort(
+    (a, b) => Number(b.is_primary === true) - Number(a.is_primary === true)
+  );
+}
+
+/**
+ * 取当前配置的主源（唯一）。
+ *
+ * 若没有任何源被标记，或主源被禁用，则回退为第一个可用源，
+ * 保证「总有一个主源」可用。
+ */
+export async function getPrimaryApiSite(
+  filterAdult = false
+): Promise<ApiSite | null> {
+  const config = await getConfig();
+  if (!config.SourceConfig || !Array.isArray(config.SourceConfig)) return null;
+
+  let sites = config.SourceConfig.filter((s) => !s.disabled);
+  if (filterAdult) sites = sites.filter((s) => !s.is_adult);
+  if (!sites.length) return null;
+
+  const primary = sites.find((s) => s.is_primary === true) || sites[0];
+  return {
+    key: primary.key,
+    name: primary.name,
+    api: primary.api,
+    detail: primary.detail,
+  };
 }
 
 /** 依据用户设置动态获取可用源 */
@@ -379,6 +419,8 @@ export async function getFilteredApiSites(userName?: string): Promise<ApiSite[]>
   if (shouldFilterAdult) {
     sites = sites.filter((s) => !s.is_adult);
   }
+
+  sites = sortPrimaryFirst(sites);
 
   return sites.map((s) => ({
     key: s.key,

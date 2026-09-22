@@ -1,6 +1,11 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any */
 
-import { getAvailableApiSites, getConfig, getFilteredApiSites } from './config';
+import {
+  getAvailableApiSites,
+  getConfig,
+  getFilteredApiSites,
+  type ApiSite,
+} from './config';
 import {
   fetchByCategory,
   fetchCategories,
@@ -162,6 +167,58 @@ async function fetchDetail(
     console.error(`获取详情失败 ${source}/${sourceId}:`, err);
     return null;
   }
+}
+
+/**
+ * 播放源补充。
+ *
+ * 主源负责封面/简介/选集/推荐等**元数据**；但主源偶尔会
+ * 「收录了影片、却没给出可播放地址」。此时用影片标题在其他源里
+ * 找同一部片，拿能播放的那一份作为播放源补充。
+ *
+ * @param title         影片标题（用于跨源匹配）
+ * @param excludeSource 需要排除的源 key（通常是主源自身）
+ * @param userName      用于应用成人内容过滤
+ * @returns 第一个有可播放分集的 SearchResult，找不到返回 null
+ */
+export async function findPlaybackSupplement(
+  title: string,
+  excludeSource?: string,
+  userName?: string
+): Promise<SearchResult | null> {
+  if (!title || !title.trim()) return null;
+
+  const sites = (userName
+    ? await getFilteredApiSites(userName)
+    : await getAvailableApiSites(true)
+  ).filter((s) => s.key !== excludeSource);
+
+  if (!sites.length) return null;
+
+  const normalized = normalizeTitle(title);
+
+  // 并发搜索各补充源（用完整标题）
+  const batches = await Promise.all(
+    sites.map((site) =>
+      searchFromApi(site, title)
+        .then((list) => list.map((r) => ({ site, r })))
+        .catch(() => [] as { site: ApiSite; r: SearchResult }[])
+    )
+  );
+
+  const candidates = batches.flat().filter(({ r }) => {
+    // 标题需近似匹配，避免拿到无关影片
+    const nt = normalizeTitle(r.title);
+    return nt === normalized || nt.includes(normalized) || normalized.includes(nt);
+  });
+
+  // 逐个回源取详情，返回第一个真正有可播放分集的
+  for (const { r } of candidates) {
+    const detail = await fetchDetail(r.source, r.id);
+    if (detail?.episodes?.length) return detail;
+  }
+
+  return null;
 }
 
 /** 按标题在所有可用源中搜索，取最佳匹配 */
@@ -377,6 +434,135 @@ export async function resolveSeasonsForLocation(
   return seasonsFor(detail, userDataFor);
 }
 
+/**
+ * 由 Series Id 直接取季列表。
+ *
+ * 供 /emby/Shows/{seriesId}/Seasons 使用。
+ * 与 resolveSeasons 的区别：显式接收 userDataFor，
+ * 且不需要调用方已持有 ItemId 之外的上下文。
+ */
+export async function resolveSeasonsForSeries(
+  seriesId: string,
+  userName?: string,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+): Promise<EmbyBaseItemDto[]> {
+  await ensureSourcesRegistered();
+  const resolved = await resolveItem(seriesId, undefined, userName);
+  if (!resolved) return [];
+  return seasonsFor(resolved.result, userDataFor);
+}
+
+/**
+ * 由 Series Id 直接取分集列表。
+ *
+ * 供 /emby/Shows/{seriesId}/Episodes 使用。
+ */
+export async function resolveEpisodesForSeries(
+  seriesId: string,
+  userName?: string,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+): Promise<EmbyBaseItemDto[]> {
+  await ensureSourcesRegistered();
+
+  // 先尝试直接解码（Series Id 本身携带 source + sourceId）
+  const classified = classifyId(seriesId);
+  if (classified.kind === 'item') {
+    const detail = await fetchDetail(classified.source, classified.sourceId);
+    if (detail?.episodes?.length) {
+      return buildEpisodesFor(detail, userDataFor);
+    }
+  }
+
+  // 回退：按标题/索引解析
+  const resolved = await resolveItem(seriesId, undefined, userName);
+  if (!resolved) return [];
+  return buildEpisodesFor(resolved.result, userDataFor);
+}
+
+/**
+ * 相似/推荐列表。
+ *
+ * 策略（全部走「主源」优先，见 preferredSource）：
+ *   1. 解析当前条目的标题，取其所属媒体库（电影/剧集/动漫/综艺/纪录片）
+ *   2. 在库对应的上游分类里拉一页，排除自身
+ *   3. 若拿到的条目不足，用库热词再补齐一批
+ *
+ * 结果全部映射为 Emby Movie/Series 条目，供客户端底部「相似」横滑展示。
+ */
+export async function resolveRecommendations(
+  itemId: string,
+  userName?: string,
+  limit = 20
+): Promise<EmbyBaseItemDto[]> {
+  await ensureSourcesRegistered();
+
+  // 先拿到当前条目，判断所属库
+  const resolved = await resolveItem(itemId, undefined, userName);
+  const libraryKey = resolved
+    ? libraryKeyForItem(resolved.result) || 'movies'
+    : 'movies';
+
+  const sites = userName
+    ? await getFilteredApiSites(userName)
+    : await getAvailableApiSites(true);
+  if (!sites.length) return [];
+
+  const excludeKey = resolved
+    ? `${resolved.source}#${resolved.sourceId}`
+    : '';
+
+  const collected = new Map<string, SearchResult>();
+  const selfKey = (r: SearchResult) => `${r.source}#${r.id}`;
+
+  const add = (list: SearchResult[]) => {
+    for (const r of list) {
+      const k = selfKey(r);
+      if (k === excludeKey) continue;
+      if (!collected.has(k)) collected.set(k, r);
+      if (collected.size >= limit) break;
+    }
+  };
+
+  // 1) 按同库分类拉取
+  const categoryBatches = await Promise.all(
+    sites.map(async (site) => {
+      try {
+        const categories = await fetchCategories(site);
+        const wanted = categories.filter(
+          (c) => libraryKeyForCategoryName(c.type_name) === libraryKey
+        );
+        if (!wanted.length) return [] as SearchResult[];
+        const pages = await Promise.all(
+          wanted.slice(0, 3).map((c) => fetchByCategory(site, c.type_id, 1))
+        );
+        return pages.flat();
+      } catch {
+        return [] as SearchResult[];
+      }
+    })
+  );
+  add(categoryBatches.flat());
+
+  // 2) 不足则用热词补齐
+  if (collected.size < limit) {
+    for (const q of queriesForLibrary(libraryKey)) {
+      const batches = await Promise.all(
+        sites.map((site) =>
+          searchFromApi(site, q).catch(() => [] as SearchResult[])
+        )
+      );
+      add(batches.flat());
+      if (collected.size >= limit) break;
+    }
+  }
+
+  return Array.from(collected.values())
+    .slice(0, limit)
+    .map((r) =>
+      toEmbyItem(r, { userData: undefined })
+    );
+}
+
 /** 由搜索结果构造季列表 */
 function seasonsFor(
   result: SearchResult,
@@ -494,6 +680,53 @@ export async function resolveStreamByLocation(opts: {
   if (!stream) return null;
 
   return { stream, result: detail };
+}
+
+/**
+ * 带「播放源补充」的播放解析。
+ *
+ * 先按 locator 定位（主源）；若主源没有可播放地址，则按标题
+ * 到其他源找可播放的那一份作为补充。
+ *
+ * @param locator    定位信息（source/sourceId，或纯标题）
+ * @param episodeIndex 分集序号（1 基）
+ */
+export async function resolveStreamWithSupplement(opts: {
+  source?: string;
+  sourceId?: string;
+  title?: string;
+  episodeIndex?: number;
+  userName?: string;
+}): Promise<{ stream: ResolvedStream; result: SearchResult } | null> {
+  // 1) 主源/定位源优先
+  if (opts.source && opts.sourceId) {
+    const primary = await resolveStreamByLocation({
+      source: opts.source,
+      sourceId: opts.sourceId,
+      episodeIndex: opts.episodeIndex,
+    });
+    if (primary) return primary;
+  }
+
+  // 2) 主源无播放地址时，用标题在补充源里找
+  if (opts.title) {
+    const supplement = await findPlaybackSupplement(
+      opts.title,
+      opts.source,
+      opts.userName
+    );
+    if (supplement?.episodes?.length) {
+      const idx =
+        opts.episodeIndex && opts.episodeIndex > 0
+          ? opts.episodeIndex - 1
+          : 0;
+      const raw = supplement.episodes[idx] ?? supplement.episodes[0];
+      const stream = resolveStreamUrl(raw);
+      if (stream) return { stream, result: supplement };
+    }
+  }
+
+  return null;
 }
 
 export { parseSeriesInfo };

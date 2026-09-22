@@ -70,6 +70,7 @@ interface DataSource {
   disabled?: boolean;
   from: 'config' | 'custom';
   is_adult?: boolean; // 添加成人内容标记字段
+  is_primary?: boolean; // 主源：封面/简介/选集/推荐优先由它提供
 }
 
 // 可折叠标签组件
@@ -697,6 +698,20 @@ const VideoSourceConfig = ({
     });
   };
 
+  // 设为主源：封面/简介/选集/推荐列表优先由主源提供，
+  // 其余源作为播放源补充。
+  const handleSetPrimary = (key: string) => {
+    const target = sources.find((s) => s.key === key);
+    if (!target) return;
+    if (target.disabled) {
+      showError('不能把已禁用的源设为主源，请先启用');
+      return;
+    }
+    callSourceApi({ action: 'setprimary', key }).catch(() => {
+      console.error('操作失败', 'setprimary', key);
+    });
+  };
+
   const handleDelete = (key: string) => {
     // 检查是否为示例源
     const source = sources.find(s => s.key === key);
@@ -1069,6 +1084,22 @@ const VideoSourceConfig = ({
           </div>
         </td>
         <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
+          {source.is_primary ? (
+            <span className='inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300'>
+              ★ 主源
+            </span>
+          ) : (
+            <button
+              onClick={() => handleSetPrimary(source.key)}
+              disabled={source.disabled}
+              className='inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-indigo-100 hover:text-indigo-700 dark:bg-gray-700/40 dark:text-gray-300 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
+              title='设为主源：封面、简介、选集、推荐列表优先由它提供'
+            >
+              设为主源
+            </button>
+          )}
+        </td>
+        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
           {source.key}
         </td>
         <td
@@ -1301,6 +1332,9 @@ const VideoSourceConfig = ({
               
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 名称
+              </th>
+              <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
+                主源
               </th>
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 Key
