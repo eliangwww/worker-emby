@@ -1,11 +1,13 @@
 import { getStorage } from '@/lib/db';
 import {
+  buildEpisodeItem,
   buildEpisodesFor,
   classifyId,
   toEmbyItem,
 } from '@/lib/emby.catalog';
-import { embyJson, embyNotFound, firstParam, withEmbyAuth } from '@/lib/emby.http';
+import { embyJson, embyNotFound, firstParam, resolveBaseUrl, withEmbyAuth } from '@/lib/emby.http';
 import { resolveItem, resolveSeasonsForLocation, ensureSourcesRegistered } from '@/lib/emby.items';
+import { buildMediaSourceFromResult } from '@/lib/emby.playback';
 import { EmbyBaseItemDto, EmbyUserItemData } from '@/lib/emby.types';
 
 export const runtime = 'edge';
@@ -43,6 +45,65 @@ export const GET = withEmbyAuth(async (request, ctx, params) => {
     const season = seasons.find((s) => s.Id === itemId);
     if (!season) return embyNotFound();
     return embyJson(season);
+  }
+
+  // ⚠️ 分集条目：必须返回 **Episode** 本身，而不是宿主剧集。
+  //
+  // 客户端点开某一集时会请求 /emby/Users/{uid}/Items/{episodeId}。
+  // 旧实现走到下面的 resolveItem，拿到的是宿主剧集详情再 toEmbyItem，
+  // 返回的 DTO.Id 是 Series Id —— 与请求的 Id 不符，客户端会判定
+  // 条目不存在/类型错误，表现为「选集看得到，但点开和播放都失败」。
+  if (classified.kind === 'episode') {
+    const resolved = await resolveItem(itemId, undefined, ctx.userName);
+    if (!resolved) return embyNotFound();
+
+    const storage = getStorage();
+    let epUserData: EmbyUserItemData = {
+      PlaybackPositionTicks: 0,
+      PlayCount: 0,
+      IsFavorite: false,
+      Played: false,
+      Key: itemId,
+      ItemId: itemId,
+    };
+    try {
+      const rec = await (storage as any).getEmbyPlayback?.(
+        ctx.userId,
+        itemId
+      );
+      const favs = await (storage as any).getAllEmbyFavorites?.(ctx.userId);
+      epUserData = {
+        PlaybackPositionTicks: rec?.PositionTicks || 0,
+        PlayCount: rec?.PlayCount || 0,
+        IsFavorite: Array.isArray(favs) && favs.includes(itemId),
+        Played: !!rec?.Played,
+        Key: itemId,
+        ItemId: itemId,
+        LastPlayedDate: rec?.LastPlayedDate
+          ? new Date(rec.LastPlayedDate).toISOString()
+          : undefined,
+      };
+    } catch {
+      // 忽略
+    }
+
+    const episode = buildEpisodeItem({
+      result: resolved.result,
+      index: classified.index,
+      userData: epUserData,
+    });
+
+    // 附带该集的 MediaSource：部分客户端（如 Infuse / Fileball）
+    // 会直接读详情里的 MediaSources 起播，不额外调 PlaybackInfo。
+    const mediaSource = buildMediaSourceFromResult({
+      result: resolved.result,
+      itemId: episode.Id || itemId,
+      episodeIndex: classified.index + 1,
+      baseUrl: resolveBaseUrl(request),
+    });
+    if (mediaSource) episode.MediaSources = [mediaSource];
+
+    return embyJson(episode);
   }
 
   const resolved = await resolveItem(itemId, undefined, ctx.userName);

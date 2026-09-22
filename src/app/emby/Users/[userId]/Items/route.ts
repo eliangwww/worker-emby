@@ -1,12 +1,19 @@
 import { getStorage } from '@/lib/db';
-import { classifyId, sortItems, toEmbyItem } from '@/lib/emby.catalog';
-import { buildEpisodesFor } from '@/lib/emby.catalog';
+import {
+  buildEpisodesFor,
+  classifyId,
+  encodeItemId,
+  sortItems,
+  toEmbyItem,
+} from '@/lib/emby.catalog';
 import {
   embyJson,
   parsePaging,
+  resolveBaseUrl,
   withEmbyAuth,
 } from '@/lib/emby.http';
 import {
+  attachMediaSources,
   listLibraryItems,
   normalizeTitle,
   resolveEpisodes,
@@ -102,12 +109,13 @@ export const GET = withEmbyAuth(async (request, ctx) => {
       });
     } else if (classified.kind === 'season') {
       // 季 -> 分集列表（客户端 Series -> Season -> Episode 的第二跳）
-      items = await resolveEpisodesForSeason(
-        classified.source,
-        classified.sourceId,
-        ctx.userName,
-        userDataFor
-      );
+      items = await episodesForParent({
+        source: classified.source,
+        sourceId: classified.sourceId,
+        userName: ctx.userName,
+        userDataFor,
+        request,
+      });
     } else if (classified.kind === 'item') {
       // Series 的子项。客户端有两种流派：
       //   A. 先要 Season，再由 Season 要 Episode（Emby 官方、Yamby）
@@ -116,22 +124,24 @@ export const GET = withEmbyAuth(async (request, ctx) => {
       const wantsEpisodes = /episode/i.test(includeItemTypes);
 
       if (wantsEpisodes) {
-        items = await resolveEpisodes(
-          parentId,
-          undefined,
-          ctx.userName,
-          userDataFor
-        );
+        items = await episodesForParent({
+          source: classified.source,
+          sourceId: classified.sourceId,
+          userName: ctx.userName,
+          userDataFor,
+          request,
+        });
       } else {
         items = await resolveSeasons(parentId, ctx.userName, userDataFor);
         // 客户端没明确要 Episode 但季为空时，直接给分集更实用
         if (!items.length) {
-          items = await resolveEpisodes(
-            parentId,
-            undefined,
-            ctx.userName,
-            userDataFor
-          );
+          items = await episodesForParent({
+            source: classified.source,
+            sourceId: classified.sourceId,
+            userName: ctx.userName,
+            userDataFor,
+            request,
+          });
         }
       }
 
@@ -142,12 +152,13 @@ export const GET = withEmbyAuth(async (request, ctx) => {
       }
     } else if (classified.kind === 'episode') {
       // 分集被当作父级（少见）：返回其所属剧集的分集
-      items = await resolveEpisodes(
-        parentId,
-        undefined,
-        ctx.userName,
-        userDataFor
-      );
+      items = await episodesForParent({
+        source: classified.source,
+        sourceId: classified.sourceId,
+        userName: ctx.userName,
+        userDataFor,
+        request,
+      });
     }
   }
   // ---------- 3) 顶层浏览（无 ParentId） ----------
@@ -219,6 +230,38 @@ export const GET = withEmbyAuth(async (request, ctx) => {
 
   return embyJson(result);
 });
+
+/**
+ * 取某部剧的分集（供季/剧集两级 ParentId 使用），并补上 MediaSources。
+ *
+ * MediaSources 让客户端（Infuse / Fileball / Hills）无需再调
+ * PlaybackInfo 即可直接起播，少一次往返、也更不易失败。
+ */
+async function episodesForParent(opts: {
+  source: string;
+  sourceId: string;
+  userName: string;
+  userDataFor: (itemId: string) => EmbyUserItemData;
+  request: Request;
+}): Promise<EmbyBaseItemDto[]> {
+  const { source, sourceId, userName, userDataFor, request } = opts;
+
+  // 直接用 location 编出 itemId 再解析，无需按标题回源搜索
+  const itemId = encodeItemId(source, sourceId);
+  const resolved = await resolveItem(itemId, undefined, userName);
+
+  const episodes = resolved
+    ? buildEpisodesFor(resolved.result, userDataFor)
+    : await resolveEpisodesForSeason(source, sourceId, userName, userDataFor);
+
+  if (!resolved || !episodes.length) return episodes;
+
+  return attachMediaSources(
+    episodes,
+    resolved.result,
+    resolveBaseUrl(request)
+  );
+}
 
 /** 取单个条目（含分集展开） */
 async function resolveItemById(

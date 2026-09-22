@@ -1,10 +1,10 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any */
 
 import {
+  type ApiSite,
   getAvailableApiSites,
   getConfig,
   getFilteredApiSites,
-  type ApiSite,
 } from './config';
 import {
   fetchByCategory,
@@ -25,6 +25,7 @@ import {
 } from './emby.catalog';
 import {
   buildMediaSourceFromResult,
+  parseMediaSourceId,
   ResolvedStream,
   resolveStreamUrl,
 } from './emby.playback';
@@ -456,11 +457,15 @@ export async function resolveSeasonsForSeries(
  * 由 Series Id 直接取分集列表。
  *
  * 供 /emby/Shows/{seriesId}/Episodes 使用。
+ *
+ * @param baseUrl 传入时会给每个分集附带 MediaSources，
+ *                让客户端无需再调 PlaybackInfo 即可直接起播。
  */
 export async function resolveEpisodesForSeries(
   seriesId: string,
   userName?: string,
-  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined,
+  baseUrl?: string
 ): Promise<EmbyBaseItemDto[]> {
   await ensureSourcesRegistered();
 
@@ -469,14 +474,43 @@ export async function resolveEpisodesForSeries(
   if (classified.kind === 'item') {
     const detail = await fetchDetail(classified.source, classified.sourceId);
     if (detail?.episodes?.length) {
-      return buildEpisodesFor(detail, userDataFor);
+      return attachMediaSources(buildEpisodesFor(detail, userDataFor), detail, baseUrl);
     }
   }
 
   // 回退：按标题/索引解析
   const resolved = await resolveItem(seriesId, undefined, userName);
   if (!resolved) return [];
-  return buildEpisodesFor(resolved.result, userDataFor);
+  return attachMediaSources(
+    buildEpisodesFor(resolved.result, userDataFor),
+    resolved.result,
+    baseUrl
+  );
+}
+
+/**
+ * 给分集列表逐个补上 MediaSources。
+ *
+ * 客户端点开某一集时会优先使用详情里的 MediaSources 起播；
+ * 缺失时会退回 PlaybackInfo。这里有值可以让起播更快、更可靠。
+ */
+export function attachMediaSources(
+  episodes: EmbyBaseItemDto[],
+  result: SearchResult,
+  baseUrl?: string
+): EmbyBaseItemDto[] {
+  if (!baseUrl) return episodes;
+
+  return episodes.map((ep, idx) => {
+    if (ep.MediaSources?.length) return ep;
+    const mediaSource = buildMediaSourceFromResult({
+      result,
+      itemId: ep.Id || '',
+      episodeIndex: idx + 1,
+      baseUrl,
+    });
+    return mediaSource ? { ...ep, MediaSources: [mediaSource] } : ep;
+  });
 }
 
 /**
@@ -632,6 +666,16 @@ export async function resolveMediaSource(opts: {
 
   let resolved: ResolvedItem | null = null;
   let epIndex = episodeIndex;
+
+  // 客户端可能只给 MediaSourceId（形如 source:sourceId:ep），
+  // 而 itemId 是宿主 Series。此时必须从 MediaSourceId 还原分集序号，
+  // 否则会退化成「永远播第 1 集」或播不出。
+  if (epIndex === undefined && mediaSourceId) {
+    const parsed = parseMediaSourceId(mediaSourceId);
+    if (parsed?.episodeIndex && parsed.episodeIndex > 0) {
+      epIndex = parsed.episodeIndex;
+    }
+  }
 
   if (classified.kind === 'episode') {
     resolved = await resolveItem(itemId, fallbackName, userName);

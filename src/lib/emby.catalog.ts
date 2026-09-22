@@ -549,43 +549,89 @@ export function buildEpisodesFor(
   const season = seasonNumber || 1;
   const seasonId = encodeSeasonId(result.source, result.id, season);
 
-  return (result.episodes || []).map((_url, idx) => {
-    const episodeId = encodeEpisodeId(result.source, result.id, idx);
-    registerEpisodeId(episodeId, result.source, result.id, idx);
+  return (result.episodes || []).map((_url, idx) =>
+    buildEpisodeItem({
+      result,
+      index: idx,
+      seriesItemId,
+      seasonId,
+      seriesName: seriesName || result.title,
+      season,
+      year,
+      userData: userDataFor?.(
+        encodeEpisodeId(result.source, result.id, idx)
+      ),
+    })
+  );
+}
 
-    const epNumber = idx + 1;
-    const name = `第 ${epNumber} 集`;
+/**
+ * 构造单个分集条目。
+ *
+ * 抽出来是因为「分集详情」与「分集列表」必须返回**完全一致**的 Id 与
+ * 字段：客户端点开某一集时会请求
+ *   GET /emby/Users/{userId}/Items/{episodeId}
+ * 若该路由返回的是 Series（Id 与请求不符），客户端会认为条目不存在，
+ * 表现为「选集看得到，但点开/播放不了」。
+ */
+export function buildEpisodeItem(opts: {
+  result: SearchResult;
+  /** 0 基数组下标 */
+  index: number;
+  seriesItemId?: string;
+  seasonId?: string;
+  seriesName?: string;
+  season?: number;
+  year?: number;
+  userData?: EmbyUserItemData;
+}): EmbyBaseItemDto {
+  const { result, index } = opts;
 
-    return {
-      Name: name,
-      ServerId: getServerId(),
-      Id: episodeId,
-      DateCreated: new Date(0).toISOString(),
-      SortName: name,
-      PremiereDate: year ? `${year}-01-01T00:00:00.000Z` : undefined,
-      ProductionYear: year,
-      Overview: result.desc || '',
-      Type: 'Episode' as const,
-      MediaType: 'Video',
-      IsFolder: false,
-      SeriesId: seriesItemId,
-      SeriesName: seriesName || result.title,
-      SeasonId: seasonId,
-      SeasonName: `第 ${season} 季`,
-      ParentId: seasonId,
-      IndexNumber: epNumber,
-      ParentIndexNumber: season,
-      ImageTags: result.poster
-        ? ({ Primary: imageTagFor(seriesItemId) } as Record<string, string>)
-        : ({} as Record<string, string>),
-      BackdropImageTags: result.poster ? [imageTagFor(seriesItemId)] : [],
-      UserData: userDataFor?.(episodeId) || buildEmptyUserData(episodeId),
-      LocationType: 'FileSystem',
-      Container: 'mp4',
-      MediaSources: [],
-      RunTimeTicks: secondsToTicks(45 * 60),
-    };
-  });
+  const seriesItemId =
+    opts.seriesItemId ?? encodeItemId(result.source, result.id);
+  const { seriesName, seasonNumber } = parseSeriesInfo(result.title);
+  const season = opts.season ?? seasonNumber ?? 1;
+  const seasonId =
+    opts.seasonId ?? encodeSeasonId(result.source, result.id, season);
+  const year = opts.year ?? parseYear(result.year);
+
+  registerItemId(seriesItemId, result.source, result.id);
+
+  const episodeId = encodeEpisodeId(result.source, result.id, index);
+  registerEpisodeId(episodeId, result.source, result.id, index);
+
+  const epNumber = index + 1;
+  const name = `第 ${epNumber} 集`;
+
+  return {
+    Name: name,
+    ServerId: getServerId(),
+    Id: episodeId,
+    DateCreated: new Date(0).toISOString(),
+    SortName: name,
+    PremiereDate: year ? `${year}-01-01T00:00:00.000Z` : undefined,
+    ProductionYear: year,
+    Overview: result.desc || '',
+    Type: 'Episode' as const,
+    MediaType: 'Video',
+    IsFolder: false,
+    SeriesId: seriesItemId,
+    SeriesName: opts.seriesName || seriesName || result.title,
+    SeasonId: seasonId,
+    SeasonName: `第 ${season} 季`,
+    ParentId: seasonId,
+    IndexNumber: epNumber,
+    ParentIndexNumber: season,
+    ImageTags: result.poster
+      ? ({ Primary: imageTagFor(seriesItemId) } as Record<string, string>)
+      : ({} as Record<string, string>),
+    BackdropImageTags: result.poster ? [imageTagFor(seriesItemId)] : [],
+    UserData: opts.userData || buildEmptyUserData(episodeId),
+    LocationType: 'FileSystem',
+    Container: 'mp4',
+    MediaSources: [],
+    RunTimeTicks: secondsToTicks(45 * 60),
+  };
 }
 
 /**

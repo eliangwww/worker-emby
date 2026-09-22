@@ -1,6 +1,7 @@
 import {
   embyJson,
   firstParam,
+  resolveBaseUrl,
   withEmbyAuth,
 } from '@/lib/emby.http';
 import {
@@ -38,7 +39,12 @@ export const GET = withEmbyAuth(async (request, ctx, params) => {
   const seasonId = searchParams.get('SeasonId') || '';
   const seasonNumber = searchParams.get('Season') || '';
 
-  let episodes = await resolveEpisodesForSeries(seriesId, ctx.userName);
+  let episodes = await resolveEpisodesForSeries(
+    seriesId,
+    ctx.userName,
+    undefined,
+    resolveBaseUrl(request)
+  );
 
   if (seasonId) {
     episodes = episodes.filter((ep) => ep.SeasonId === seasonId);

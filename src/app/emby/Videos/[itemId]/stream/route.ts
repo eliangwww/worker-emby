@@ -1,4 +1,5 @@
 import { authenticateRequest } from '@/lib/emby.auth';
+import { classifyId } from '@/lib/emby.catalog';
 import { resolveBaseUrl } from '@/lib/emby.config';
 import {
   embyError,
@@ -89,6 +90,18 @@ async function handle(
     return embyError(404, 'No playable stream found');
   }
 
+  // ⚠️ 必须带上分集序号，否则无论点哪一集都只会播第 1 集。
+  // 序号来源二选一：itemId 本身是 Episode 形态，或 MediaSourceId 带 :ep。
+  const classified = classifyId(itemId);
+  let episodeIndex =
+    classified.kind === 'episode' ? classified.index + 1 : undefined;
+  if (!episodeIndex && mediaSourceId) {
+    const parsed = parseMediaSourceId(mediaSourceId);
+    if (parsed?.episodeIndex && parsed.episodeIndex > 0) {
+      episodeIndex = parsed.episodeIndex;
+    }
+  }
+
   // ⚠️ 必须代理**真实上游地址**，而不是 mediaSource.Path。
   // Path 指向本站自己的代理端点，转发它会造成自我回环，
   // 并且丢失源站所需的 Referer/User-Agent。
@@ -99,6 +112,7 @@ async function handle(
     source: resolved.result.source,
     sourceId: resolved.result.id,
     title: resolved.result.title,
+    episodeIndex,
     userName: auth.userName,
   });
 
