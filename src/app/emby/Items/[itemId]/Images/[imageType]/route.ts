@@ -25,14 +25,24 @@ export async function GET(
   request: Request,
   ctx: { params: { itemId?: string; imageType?: string } }
 ) {
+  // ⚠️ 图片端点**不做强制鉴权**。
+  //
+  // Emby 客户端渲染海报墙时，多数以裸 GET / <img> 拉图，
+  // 不会带上 X-Emby-Token。早期实现在这里直接 401，
+  // 导致所有封面都加载不出来。
+  //
+  // 图片本身不是敏感资源（只是聚合源的公开海报地址），
+  // 因此放行匿名访问；若带 token 仍会识别用户，
+  // 以便应用成人内容过滤等个性化逻辑。
   const auth = await authenticateRequest(request);
-  if (!auth.ok) return embyUnauthorized();
+  const userName = auth.ok ? auth.userName : undefined;
 
   const itemId = ctx.params?.itemId || '';
   const imageType = (ctx.params?.imageType || 'Primary').toLowerCase();
   const { searchParams } = new URL(request.url);
   const requestedUrl = searchParams.get('url');
 
+  // 直接给了 url 参数时，作为纯图片代理使用（不涉及条目解析）
   let imageUrl: string | undefined = requestedUrl || undefined;
 
   if (!imageUrl) {
@@ -40,23 +50,24 @@ export async function GET(
 
     const classified = classifyId(itemId);
     if (classified.kind === 'unknown') {
-      return placeholderResponse(request);
+      return placeholderResponse();
     }
 
-    const resolved = await resolveItem(itemId, undefined, auth.userName);
+    const resolved = await resolveItem(itemId, undefined, userName);
     if (!resolved || !resolved.result.poster) {
-      return placeholderResponse(request);
+      return placeholderResponse();
     }
     imageUrl = resolved.result.poster;
   }
 
-  // 源站图片多为 http，直接重定向会让 https 客户端拦截
+  // 源站图片多为 http，直接重定向会让 https 客户端拦截（混合内容）
   const shouldProxy =
     process.env.EMBY_PROXY_IMAGES === 'true' ||
-    (imageUrl.startsWith('http://') && new URL(request.url).protocol === 'https:');
+    (imageUrl.startsWith('http://') &&
+      new URL(request.url).protocol === 'https:');
 
   if (shouldProxy) {
-    return proxyImage(imageUrl, imageType);
+    return proxyImage(imageUrl);
   }
 
   return new Response(null, {
@@ -70,10 +81,7 @@ export async function GET(
 }
 
 /** 代理图片，附加防盗链头 */
-async function proxyImage(
-  imageUrl: string,
-  _imageType: string
-): Promise<Response> {
+async function proxyImage(imageUrl: string): Promise<Response> {
   const headers: Record<string, string> = {
     'User-Agent':
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -115,12 +123,11 @@ async function proxyImage(
 }
 
 /** 无海报时返回内联 SVG 占位，避免客户端显示破图 */
-function placeholderResponse(request: Request): Response {
+function placeholderResponse(): Response {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
   <rect width="300" height="450" fill="#1f2937"/>
   <text x="150" y="225" font-family="sans-serif" font-size="20" fill="#6b7280" text-anchor="middle">No Image</text>
 </svg>`;
-  void request;
   return new Response(svg, {
     status: 200,
     headers: {

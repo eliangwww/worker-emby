@@ -142,11 +142,11 @@ check('详情含 Name', !!detail.Name, JSON.stringify(detail).slice(0, 120));
 check('详情 Type 为 Series', detail.Type === 'Series', String(detail.Type));
 console.log(`      详情: ${detail.Name} (${detail.Type}) 集数=${detail.ChildCount}`);
 
-// ---- isolate 4：分集列表 ----
+// ---- isolate 4：分集列表（明确要求 Episode，符合真实客户端） ----
 const iso4 = freshIsolate();
 await iso4.get('lib/config.ts').getConfig();
 const epRes = await rj(await iso4.get('app/emby/Users/[userId]/Items/route.ts').GET(
-  jreq(`/emby/Users/${UID}/Items?ParentId=${ITEM_ID}`, { headers: H }),
+  jreq(`/emby/Users/${UID}/Items?ParentId=${ITEM_ID}&IncludeItemTypes=Episode`, { headers: H }),
   { params: { userId: UID } }
 ));
 check('isolate 4 列出分集', (epRes.Items?.length || 0) > 0, `items=${epRes.Items?.length}`);

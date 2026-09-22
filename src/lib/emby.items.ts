@@ -9,6 +9,7 @@ import {
 } from './downstream';
 import {
   buildEpisodesFor,
+  buildSeasonItem,
   classifyId,
   encodeItemId,
   LIBRARIES,
@@ -305,6 +306,81 @@ export async function resolveEpisodes(
   const resolved = await resolveItem(itemId, fallbackName, userName);
   if (!resolved) return [];
   return buildEpisodesFor(resolved.result, userDataFor);
+}
+
+/**
+ * 获取 Series 下的季列表。
+ *
+ * Emby 官方客户端与 Yamby 等的导航路径是
+ * Series -> Season -> Episode。早期实现从不返回 Season 条目，
+ * 导致这些客户端在「季」这一层拿到空列表 —— 表现为**没有剧集列表**。
+ *
+ * 由于聚合源把一个剧的所有分集放在同一个列表里，这里统一
+ * 只暴露一个季（第 1 季，或标题中解析出的季号）。
+ */
+export async function resolveSeasons(
+  itemId: string,
+  userName?: string,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+): Promise<EmbyBaseItemDto[]> {
+  const resolved = await resolveItem(itemId, undefined, userName);
+  if (!resolved) return [];
+  return seasonsFor(resolved.result, userDataFor);
+}
+
+/**
+ * 由 source / sourceId 直接构造季列表（无需回源搜索）。
+ * 供详情端点解析 Season Id 时使用。
+ */
+export async function resolveSeasonsForLocation(
+  source: string,
+  sourceId: string,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+): Promise<EmbyBaseItemDto[]> {
+  const detail = await fetchDetail(source, sourceId);
+  if (!detail) return [];
+  return seasonsFor(detail, userDataFor);
+}
+
+/** 由搜索结果构造季列表 */
+function seasonsFor(
+  result: SearchResult,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+): EmbyBaseItemDto[] {
+  const episodeCount = result.episodes?.length || 0;
+  if (episodeCount === 0) return [];
+
+  const { seasonNumber } = parseSeriesInfo(result.title);
+  const season = seasonNumber || 1;
+
+  return [
+    buildSeasonItem(
+      result.source,
+      result.id,
+      season,
+      `第 ${season} 季`,
+      episodeCount,
+      result.poster,
+      undefined,
+      userDataFor
+    ),
+  ];
+}
+
+/**
+ * 直接按 source / sourceId 取某季的分集。
+ * 供 ParentId 为季 Id 时调用（第二跳），无需再回源搜索。
+ */
+export async function resolveEpisodesForSeason(
+  source: string,
+  sourceId: string,
+  userName?: string,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
+): Promise<EmbyBaseItemDto[]> {
+  void userName;
+  const detail = await fetchDetail(source, sourceId);
+  if (!detail) return [];
+  return buildEpisodesFor(detail, userDataFor);
 }
 
 /**

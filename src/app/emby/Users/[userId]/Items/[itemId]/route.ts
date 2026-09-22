@@ -5,7 +5,7 @@ import {
   toEmbyItem,
 } from '@/lib/emby.catalog';
 import { embyJson, embyNotFound, firstParam, withEmbyAuth } from '@/lib/emby.http';
-import { resolveItem } from '@/lib/emby.items';
+import { resolveItem, resolveSeasonsForLocation } from '@/lib/emby.items';
 import { EmbyBaseItemDto, EmbyUserItemData } from '@/lib/emby.types';
 
 export const runtime = 'edge';
@@ -28,6 +28,17 @@ export const GET = withEmbyAuth(async (request, ctx, params) => {
     const view = buildViews().find((v) => v.Id === itemId);
     if (!view) return embyNotFound();
     return embyJson(view);
+  }
+
+  // 季条目：客户端可能直接打开 Season 页面
+  if (classified.kind === 'season') {
+    const seasons = await resolveSeasonsForLocation(
+      classified.source,
+      classified.sourceId
+    );
+    const season = seasons.find((s) => s.Id === itemId);
+    if (!season) return embyNotFound();
+    return embyJson(season);
   }
 
   const resolved = await resolveItem(itemId, undefined, ctx.userName);

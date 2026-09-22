@@ -205,7 +205,10 @@ function encodableId(sourceId: string): boolean {
 interface DecodedId {
   source: string;
   sourceId: string;
+  /** 分集序号（type='2'） */
   episodeIndex?: number;
+  /** 季号（type='3'） */
+  seasonNumber?: number;
 }
 
 /**
@@ -238,10 +241,10 @@ function decodeReversible(id: string): DecodedId | null {
   if (!hex) return null;
 
   const type = hex[8];
-  if (type !== '1' && type !== '2') return null;
+  if (type !== '1' && type !== '2' && type !== '3') return null;
 
   const srcHash = hex.slice(0, 8);
-  const epHex = hex.slice(9, 12);
+  const auxHex = hex.slice(9, 12);
   const numHex = hex.slice(12, 32);
 
   // 还原 sourceId（0 也是合法值，不做额外排除）
@@ -258,11 +261,10 @@ function decodeReversible(id: string): DecodedId | null {
   if (!source) return null;
 
   if (type === '2') {
-    return {
-      source,
-      sourceId,
-      episodeIndex: parseInt(epHex, 16),
-    };
+    return { source, sourceId, episodeIndex: parseInt(auxHex, 16) };
+  }
+  if (type === '3') {
+    return { source, sourceId, seasonNumber: parseInt(auxHex, 16) };
   }
   return { source, sourceId };
 }
@@ -333,12 +335,16 @@ export function classifyId(
   | { kind: 'view'; library: LibraryDefinition }
   | { kind: 'item'; source: string; sourceId: string }
   | { kind: 'episode'; source: string; sourceId: string; index: number }
+  | { kind: 'season'; source: string; sourceId: string; season: number }
   | { kind: 'unknown' } {
   const lib = findLibraryById(id);
   if (lib) return { kind: 'view', library: lib };
 
   const ep = decodeEpisodeId(id);
   if (ep) return { kind: 'episode', ...ep };
+
+  const season = decodeSeasonId(id);
+  if (season) return { kind: 'season', ...season };
 
   const item = decodeItemId(id);
   if (item) return { kind: 'item', ...item };
@@ -467,13 +473,40 @@ export function imageTagFor(seed: string): string {
   return deriveGuid(`${seed}:img`).replace(/-/g, '').slice(0, 16);
 }
 
-/** 季 Id 编码 */
+/**
+ * 季 Id 编码（可逆，类型标记 '3'）。
+ *
+ * 必须与条目/分集一样可逆：客户端会先拉 Series 的子项（季），
+ * 再拉 Season 的子项（分集），这些请求同样可能落在不同 isolate。
+ */
 export function encodeSeasonId(
   source: string,
   sourceId: string,
   season: number
 ): string {
-  return deriveGuid(`${getServerId()}:season:${source}:${sourceId}:${season}`);
+  if (!encodableId(sourceId)) {
+    return deriveGuid(`${getServerId()}:season:${source}:${sourceId}:${season}`);
+  }
+
+  const srcHash = hash32(source).toString(16).padStart(8, '0');
+  const s = Math.max(0, Math.min(season, 0xfff)).toString(16).padStart(3, '0');
+  const num = BigInt(sourceId).toString(16).padStart(20, '0').slice(-20);
+  return formatAsGuid(srcHash + '3' + s + num);
+}
+
+/** 解码季 Id */
+export function decodeSeasonId(
+  seasonId: string
+): { source: string; sourceId: string; season: number } | null {
+  const rev = decodeReversible(seasonId);
+  if (rev && rev.seasonNumber !== undefined) {
+    return {
+      source: rev.source,
+      sourceId: rev.sourceId,
+      season: rev.seasonNumber,
+    };
+  }
+  return null;
 }
 
 /** 空播放状态 */
@@ -555,28 +588,45 @@ export function buildEpisodesFor(
   });
 }
 
-/** 构造季条目 */
+/**
+ * 构造季条目。
+ *
+ * Id 必须与 buildEpisodesFor 中 Episode.ParentId 使用的
+ * encodeSeasonId 完全一致，否则客户端由季 Id 拉分集会 404。
+ */
 export function buildSeasonItem(
-  seriesId: string,
+  source: string,
+  sourceId: string,
   seasonNumber: number,
   seasonName: string,
-  episodeCount: number
+  episodeCount: number,
+  poster?: string,
+  userData?: EmbyUserItemData,
+  userDataFor?: (itemId: string) => EmbyUserItemData | undefined
 ): EmbyBaseItemDto {
+  const seriesId = encodeItemId(source, sourceId);
+  const seasonId = encodeSeasonId(source, sourceId, seasonNumber);
+  registerItemId(seriesId, source, sourceId);
+
   return {
     Name: seasonName,
     ServerId: getServerId(),
-    Id: deriveGuid(`${seriesId}:season:${seasonNumber}`),
+    Id: seasonId,
     DateCreated: new Date(0).toISOString(),
     SortName: seasonName,
     Type: 'Season',
     IsFolder: true,
     SeriesId: seriesId,
     SeriesName: seasonName,
+    ParentId: seriesId,
     IndexNumber: seasonNumber,
     ParentIndexNumber: 0,
     ChildCount: episodeCount,
     RecursiveItemCount: episodeCount,
     LocationType: 'FileSystem',
+    ImageTags: poster ? { Primary: imageTagFor(seriesId) } : {},
+    BackdropImageTags: poster ? [imageTagFor(seriesId)] : [],
+    UserData: userData || userDataFor?.(seasonId) || buildEmptyUserData(seasonId),
   };
 }
 

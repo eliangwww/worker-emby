@@ -466,8 +466,13 @@ console.log('\n[12] 图片端点');
   check('未知条目返回占位图（200）', res.status === 200, `got ${res.status}`);
   check('占位图 Content-Type 为 svg', (res.headers.get('content-type') || '').includes('svg'), String(res.headers.get('content-type')));
 
-  const noAuth = await R.images(req('/emby/Items/x/Images/Primary'), ctx({ itemId: 'x', imageType: 'Primary' }));
-  check('图片端点需要鉴权 -> 401', noAuth.status === 401, `got ${noAuth.status}`);
+  // 图片端点故意不强制鉴权：客户端渲染海报墙时多为裸 <img> 请求，
+  // 不带 token。此前强制 401 导致所有封面加载失败。
+  const noAuth = await R.images(
+    req('/emby/Items/unknown/Images/Primary'),
+    ctx({ itemId: 'unknown', imageType: 'Primary' })
+  );
+  check('图片端点允许匿名访问（封面需要）', noAuth.status === 200, `got ${noAuth.status}`);
 }
 
 console.log('\n[13] 其他客户端兼容端点');

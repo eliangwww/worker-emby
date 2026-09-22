@@ -10,7 +10,9 @@ import {
   listLibraryItems,
   normalizeTitle,
   resolveEpisodes,
+  resolveEpisodesForSeason,
   resolveItem,
+  resolveSeasons,
 } from '@/lib/emby.items';
 import { EmbyBaseItemDto, EmbyQueryResult, EmbyUserItemData } from '@/lib/emby.types';
 
@@ -95,19 +97,54 @@ export const GET = withEmbyAuth(async (request, ctx) => {
         userName: ctx.userName,
         userDataFor,
       });
-    } else if (classified.kind === 'item' || classified.kind === 'episode') {
-      // 剧集 -> 分集列表
-      const baseId =
-        classified.kind === 'episode'
-          ? parentId
-          : parentId;
-      items = await resolveEpisodes(baseId, undefined, ctx.userName, userDataFor);
+    } else if (classified.kind === 'season') {
+      // 季 -> 分集列表（客户端 Series -> Season -> Episode 的第二跳）
+      items = await resolveEpisodesForSeason(
+        classified.source,
+        classified.sourceId,
+        ctx.userName,
+        userDataFor
+      );
+    } else if (classified.kind === 'item') {
+      // Series 的子项。客户端有两种流派：
+      //   A. 先要 Season，再由 Season 要 Episode（Emby 官方、Yamby）
+      //   B. 直接要 Episode（Infuse、Fileball）
+      // 依据 IncludeItemTypes 判断，两种都支持。
+      const wantsEpisodes = /episode/i.test(includeItemTypes);
 
-      // 拿不到分集时回退为单条目返回，避免客户端白屏
+      if (wantsEpisodes) {
+        items = await resolveEpisodes(
+          parentId,
+          undefined,
+          ctx.userName,
+          userDataFor
+        );
+      } else {
+        items = await resolveSeasons(parentId, ctx.userName, userDataFor);
+        // 客户端没明确要 Episode 但季为空时，直接给分集更实用
+        if (!items.length) {
+          items = await resolveEpisodes(
+            parentId,
+            undefined,
+            ctx.userName,
+            userDataFor
+          );
+        }
+      }
+
+      // 兜底：仍拿不到子项时返回条目本身，避免客户端白屏
       if (!items.length) {
-        const one = await resolveItemById(baseId, ctx.userName, userDataFor);
+        const one = await resolveItemById(parentId, ctx.userName, userDataFor);
         if (one) items = [one];
       }
+    } else if (classified.kind === 'episode') {
+      // 分集被当作父级（少见）：返回其所属剧集的分集
+      items = await resolveEpisodes(
+        parentId,
+        undefined,
+        ctx.userName,
+        userDataFor
+      );
     }
   }
   // ---------- 3) 顶层浏览（无 ParentId） ----------
