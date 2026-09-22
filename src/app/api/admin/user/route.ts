@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
-import { getStorage } from '@/lib/db';
+import { getStorage, isAdminStorageAvailable } from '@/lib/db';
 import { IStorage } from '@/lib/types';
 
 export const runtime = 'edge';
@@ -22,11 +22,11 @@ const ACTIONS = [
 ] as const;
 
 export async function POST(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
-  if (storageType === 'localstorage') {
+  // 依据 D1 绑定判断，而不是易漂移的 NEXT_PUBLIC_STORAGE_TYPE
+  if (!isAdminStorageAvailable()) {
     return NextResponse.json(
       {
-        error: '不支持本地存储进行管理员配置',
+        error: 'D1 数据库未绑定，无法进行管理员配置',
       },
       { status: 400 }
     );

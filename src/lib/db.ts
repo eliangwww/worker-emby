@@ -23,6 +23,22 @@ export function isD1Available(): boolean {
   return !!process.env.DB;
 }
 
+/**
+ * 管理员配置所需存储是否可用。
+ *
+ * 管理员配置（源/站点/用户）必须持久化到 D1。本项目只支持
+ * Cloudflare 部署，因此判断依据就是 **D1 绑定是否存在**。
+ *
+ * ⚠️ 不要再用 NEXT_PUBLIC_STORAGE_TYPE 判断：
+ *  - 它带 NEXT_PUBLIC_ 前缀，属于构建期内联变量，运行时改了也没用；
+ *  - 很容易忘记设置而回落到 'localstorage'，导致后台所有管理
+ *    接口一律 400「不支持本地存储进行管理员配置」，但实际
+ *    D1 明明已绑定。改用 D1 绑定探测后，只要绑定在就能用。
+ */
+export function isAdminStorageAvailable(): boolean {
+  return isD1Available();
+}
+
 /** 创建存储实例；D1 不可用时抛出明确错误而不是静默降级 */
 function createStorage(): IStorage {
   if (!isD1Available()) {

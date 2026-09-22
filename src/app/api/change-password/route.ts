@@ -3,19 +3,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getStorage } from '@/lib/db';
+import { getStorage, isAdminStorageAvailable } from '@/lib/db';
 import { IStorage } from '@/lib/types';
 
 export const runtime = 'edge';
 
 export async function POST(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
-
-  // 不支持 localstorage 模式
-  if (storageType === 'localstorage') {
+  // 依据 D1 绑定判断，而不是易漂移的 NEXT_PUBLIC_STORAGE_TYPE
+  if (!isAdminStorageAvailable()) {
     return NextResponse.json(
       {
-        error: '不支持本地存储模式修改密码',
+        error: 'D1 数据库未绑定，无法修改密码',
       },
       { status: 400 }
     );
