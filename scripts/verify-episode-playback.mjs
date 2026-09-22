@@ -66,21 +66,34 @@ check(
 );
 
 // ---------- 3) stream 路由带上分集序号 ----------
-console.log('\n[3] 播放流路由 (Videos/{itemId}/stream)');
+console.log('\n[3] 播放流路由 (Videos/{itemId}/stream 及带后缀变体)');
 const streamPath = 'src/app/emby/Videos/[itemId]/stream/route.ts';
 check('播放流路由存在', exists(streamPath));
 const stream = read(streamPath);
-check('引入 classifyId', /import \{ classifyId \}/.test(stream));
-check('引入 parseMediaSourceId', /parseMediaSourceId/.test(stream));
-check('由 itemId 推断分集序号', /classified\.kind === 'episode' \? classified\.index \+ 1/.test(stream));
+// 播放解析已抽到共享模块 emby.stream.ts
+const streamLib = read('src/lib/emby.stream.ts');
+check('stream 路由复用 handleStreamRequest', /handleStreamRequest/.test(stream));
+check('导出 handleStreamRequest', /export async function handleStreamRequest\(/.test(streamLib));
+check('引入 classifyId', /import \{ classifyId \}/.test(streamLib));
+check('引入 parseMediaSourceId', /parseMediaSourceId/.test(streamLib));
+check('由 itemId 推断分集序号', /classified\.kind === 'episode' \? classified\.index \+ 1/.test(streamLib));
 check(
   '由 MediaSourceId 推断分集序号',
-  /parseMediaSourceId\(mediaSourceId\)/.test(stream)
+  /parseMediaSourceId\(mediaSourceId\)/.test(streamLib)
 );
 check(
   'resolveStreamWithSupplement 传入 episodeIndex',
-  /resolveStreamWithSupplement\(\{[\s\S]*?episodeIndex,/.test(stream)
+  /resolveStreamWithSupplement\(\{[\s\S]*?episodeIndex,/.test(streamLib)
 );
+// 带后缀的播放路径（stream.m3u8 / stream.mp4 / original.mkv / master.m3u8）
+const catchAllPath = 'src/app/emby/Videos/[itemId]/[[...path]]/route.ts';
+check('带后缀播放路径 catch-all 路由存在', exists(catchAllPath));
+if (exists(catchAllPath)) {
+  const catchAll = read(catchAllPath);
+  check('catch-all 复用 handleStreamRequest', /handleStreamRequest/.test(catchAll));
+  check('catch-all 导出 GET', /export async function GET\(/.test(catchAll));
+  check('catch-all 导出 HEAD', /export async function HEAD\(/.test(catchAll));
+}
 
 // ---------- 4) resolveMediaSource 从 MediaSourceId 还原序号 ----------
 console.log('\n[4] emby.items.ts 播放解析');

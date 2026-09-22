@@ -91,11 +91,13 @@ check('downstream 不再盲取 playSources[0]',
   !/const mainSource = playSources\[0\]/.test(read('src/lib/downstream.ts')));
 check('downstream 优先选含 m3u8 的播放组',
   /m3u8Groups/.test(read('src/lib/downstream.ts')));
-const streamRoute = read('src/app/emby/Videos/[itemId]/stream/route.ts');
-check('stream 路由使用 resolveStreamWithSupplement',
-  /resolveStreamWithSupplement/.test(streamRoute));
-check('stream 路由传入标题用于跨源补充',
-  /title:\s*resolved\.result\.title/.test(streamRoute));
+const streamLib = read('src/lib/emby.stream.ts');
+check('播放解析使用 resolveStreamWithSupplement',
+  /resolveStreamWithSupplement/.test(streamLib));
+check('播放解析传入标题用于跨源补充',
+  /title:\s*resolved\.result\.title/.test(streamLib));
+check('stream 路由复用共享 handleStreamRequest',
+  /handleStreamRequest/.test(read('src/app/emby/Videos/[itemId]/stream/route.ts')));
 
 // ---------- 7) 后台 UI ----------
 console.log('\n[7] 后台 UI');

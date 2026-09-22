@@ -24,6 +24,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   ChevronDown,
   ChevronUp,
+  Loader2,
   Settings,
   Users,
   Video,
@@ -700,16 +701,32 @@ const VideoSourceConfig = ({
 
   // 设为主源：封面/简介/选集/推荐列表优先由主源提供，
   // 其余源作为播放源补充。
-  const handleSetPrimary = (key: string) => {
+  const [settingPrimaryKey, setSettingPrimaryKey] = useState<string | null>(
+    null
+  );
+  const handleSetPrimary = async (key: string) => {
     const target = sources.find((s) => s.key === key);
     if (!target) return;
     if (target.disabled) {
       showError('不能把已禁用的源设为主源，请先启用');
       return;
     }
-    callSourceApi({ action: 'setprimary', key }).catch(() => {
-      console.error('操作失败', 'setprimary', key);
-    });
+    if (target.is_primary) {
+      await showSuccess(`「${target.name}」已经是主源了`);
+      return;
+    }
+
+    setSettingPrimaryKey(key);
+    try {
+      await callSourceApi({ action: 'setprimary', key });
+      await showSuccess(
+        `已将「${target.name}」设为主源。\n封面、简介、选集、推荐列表将优先由它提供。`
+      );
+    } catch {
+      // callSourceApi 内部已弹错误提示，这里不再重复
+    } finally {
+      setSettingPrimaryKey(null);
+    }
   };
 
   const handleDelete = (key: string) => {
@@ -1049,7 +1066,11 @@ const VideoSourceConfig = ({
       <tr
         ref={setNodeRef}
         style={style}
-        className='hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors select-none'
+        className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors select-none ${
+          source.is_primary
+            ? 'bg-indigo-50/60 dark:bg-indigo-900/10'
+            : ''
+        }`}
       >
         {/* 拖拽手柄 */}
         <td
@@ -1085,17 +1106,24 @@ const VideoSourceConfig = ({
         </td>
         <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
           {source.is_primary ? (
-            <span className='inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300'>
+            <span className='inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300'>
               ★ 主源
             </span>
           ) : (
             <button
               onClick={() => handleSetPrimary(source.key)}
-              disabled={source.disabled}
-              className='inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-indigo-100 hover:text-indigo-700 dark:bg-gray-700/40 dark:text-gray-300 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
+              disabled={source.disabled || settingPrimaryKey === source.key}
+              className='inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-indigo-100 hover:text-indigo-700 dark:bg-gray-700/40 dark:text-gray-300 dark:hover:bg-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
               title='设为主源：封面、简介、选集、推荐列表优先由它提供'
             >
-              设为主源
+              {settingPrimaryKey === source.key ? (
+                <>
+                  <Loader2 size={12} className='animate-spin' />
+                  设置中
+                </>
+              ) : (
+                '设为主源'
+              )}
             </button>
           )}
         </td>
@@ -1309,6 +1337,23 @@ const VideoSourceConfig = ({
           </div>
         </div>
       )}
+
+      {/* 主源提示条 */}
+      {(() => {
+        const primary = sources.find((s) => s.is_primary);
+        return (
+          <div className='flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 text-sm'>
+            <span className='text-indigo-700 dark:text-indigo-300 font-medium'>
+              {primary
+                ? `当前主源：${primary.name}`
+                : '当前未设置主源（将使用列表排序中的第一个启用源）'}
+            </span>
+            <span className='text-xs text-indigo-500 dark:text-indigo-400'>
+              主源负责提供封面、简介、选集与推荐列表
+            </span>
+          </div>
+        );
+      })()}
 
       {/* 视频源表格 */}
       <div className='border border-gray-200 dark:border-gray-700 rounded-lg max-h-[28rem] overflow-y-auto overflow-x-auto'>
